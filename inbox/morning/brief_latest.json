@@ -1,0 +1,85 @@
+{
+  "brief": {
+    "type": "BRIEFING",
+    "agent": "NEXUS",
+    "ts": "2025-12-29T18:53:48.671638Z",
+    "summary": "Morning brief: weather + papers.",
+    "details": [
+      {
+        "item": "weather",
+        "metric": "43F, Mist",
+        "action": "Dress appropriately."
+      },
+      {
+        "item": "papers",
+        "metric": "3 items",
+        "action": "Skim top 1\u20132 today."
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "inbox/morning/brief_latest.json",
+        "type": "report"
+      }
+    ]
+  },
+  "weather": {
+    "temp": 43.12,
+    "condition": "Mist",
+    "humidity": 98,
+    "high": 45.25,
+    "low": 40.69
+  },
+  "papers": [
+    {
+      "title": "Sight, smell and more: What cues do free-ranging dogs use for decision-making while scavenging?",
+      "authors": [
+        "Rohan Sarkar",
+        "Tuhin Subhra Pal",
+        "Sharmistha Maji",
+        "Srijaya Nandi",
+        "Aesha Lahiri",
+        "Ashim Kumar Basumatary",
+        "Arpitha GP",
+        "Nakul Wehare",
+        "Nudrat Jahan",
+        "Sharayu Jakhete",
+        "Srinwanti Bandyopadhyay",
+        "Rajdip Adhikary",
+        "Tithi Paul",
+        "Shreya Majumdar",
+        "Anindita Bhadra"
+      ],
+      "summary": "Finding food is a fundamental activity for survival of all living organisms. Free-ranging dogs have been known to use their olfaction to assess the quality and type of available food but their use of visual ability in foraging is not well-documented. In the current study, we seek to remedy that by testing free-ranging dogs in a food-based choice test. We tested whether the dogs implemented hierarchical or synergistic usage of cues while finding food. We found limited prioritization of olfactory cues over visual cues in dichromatic choice tests but in phases with similar perceptual elements, the sensory choice was not clear. Furthermore, free-ranging dogs display a dynamic decision-making in unpredictable urban environments adopting a good-enough strategy during foraging. They prefer speed over accuracy, settling for intermediate quality food if their preferred food item is not available. These dogs also displayed left-bias during food choice. In multi-sensorial, natural setting multiple modulators like environmental noise, risk, and internal perceptual elements apart from food cues seem to be affecting the decision-making in dogs.",
+      "published": "2025-11-22T16:06:23Z",
+      "arxiv_id": "2512.00058v1",
+      "pdf_url": "https://arxiv.org/pdf/2512.00058v1"
+    },
+    {
+      "title": "Effect of Dopamine in Enhancement of SNR of Cortico-Striatal-Thalamo-Cortical Loop Spiking",
+      "authors": [
+        "Hadi Barati",
+        "Ali Nayerifar",
+        "Mehdi Fardmanesh"
+      ],
+      "summary": "In this work, the effects of dopamine neurotransmitter within the Cortico-Striatal-Thalamo-Cortical (CSTC) loop have been investigated. Simulations confirmed dopamine facilitates movement via thalamic disinhibition. Analysis of its impact on the signal-to-noise ratio (SNR) revealed a complex, region-specific outcome: SNR increased in some regions (e.g., D2 Striatum: 3.41 dB to 6.25 dB), decreased in others (e.g., Thalamus VL: 6.24 dB to 3.93 dB), and remained stable elsewhere (e.g., M1: 3.16 dB to 3.13 dB). This heterogeneity stems from dopamine increasing the excitability of D1-receptor-expressing neurons, which amplifies channel conductance noise and reduces SNR in specific circuits. Thus, dopamine acts not as a uniform signal enhancer, but as a complex modulator that critically balances facilitation and noise within the CSTC loop.",
+      "published": "2025-11-18T13:05:09Z",
+      "arxiv_id": "2511.14466v2",
+      "pdf_url": "https://arxiv.org/pdf/2511.14466v2"
+    },
+    {
+      "title": "An in-silico integration of neurodevelopmental and dopaminergic views of schizophrenia",
+      "authors": [
+        "Xena Al-Hejji",
+        "Santina Duarte",
+        "Jose Guillermo Gomez Castro",
+        "Edgar Bermudez Contreras",
+        "Eric Chalmers"
+      ],
+      "summary": "Deep reinforcement learning (DRL) algorithms have the potential to provide new insights into psychiatric disorders. Here we create a DRL model of schizophrenia: a complex psychotic disorder characterized by anhedonia, avoidance, temporal discounting, catatonia, and hallucinations. Schizophrenia's causes are not well understood: dopaminergic theories emphasize dopamine system dysfunction, while neurodevelopmental theories emphasize abnormal connectivity, including excitation/inhibition (E/I) imbalance in the brain. In this study, we suppressed positive (excitatory) connections within an artificial neural network to simulate E/I imbalance. Interestingly, this is insufficient to create behavioral changes; the network simply compensates for the imbalance. But in doing so it becomes more sensitive to noise. Injecting noise into the network then creates a range of schizophrenic-like behaviours. These findings point to an interesting potential pathology of schizophrenia: E/I imbalance leads to a compensatory response by the network to increase the excitability of neurons, which increases susceptibility to noise. This suggests that the combination of E/I imbalance and neural noise may be key in the emergence of schizophrenic symptoms. We further notice altered response to reward prediction error in our model, and thus propose that E/I imbalance plus noise can account for both schizophrenia symptoms and dopamine system dysfunction: potentially unifying dopaminergic and neurodevelopmental theories of schizophrenia pathology.",
+      "published": "2025-10-15T17:13:14Z",
+      "arxiv_id": "2510.24741v1",
+      "pdf_url": "https://arxiv.org/pdf/2510.24741v1"
+    }
+  ]
+}
