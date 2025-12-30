@@ -1,0 +1,104 @@
+"""Base agent class with LLM interface."""
+import os
+import requests
+from typing import Dict, Any, Optional, List
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+class BaseAgent:
+    """Base class for all agents (NEXUS, CORTEX, FRONTIER)."""
+
+    def __init__(self, agent_name: str):
+        """
+        Initialize base agent.
+
+        Args:
+            agent_name: Name of the agent (NEXUS, CORTEX, FRONTIER)
+        """
+        self.agent_name = agent_name
+        self.llm_url = os.getenv("LLM_API_URL", "http://localhost:8000")
+        self.model_name = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-405B-Instruct")
+
+        # Load system prompt
+        self.system_prompt = self._load_system_prompt()
+
+    def _load_system_prompt(self) -> str:
+        """Load agent system prompt from Prompts folder."""
+        from . import load_agent_context
+        return load_agent_context(self.agent_name)
+
+    def _call_llm(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 2000,
+        temperature: float = 0.7,
+    ) -> str:
+        """
+        Call local LLM (vLLM) via OpenAI-compatible API.
+
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+
+        Returns:
+            LLM response text
+
+        Raises:
+            RuntimeError: If LLM call fails
+        """
+        url = f"{self.llm_url}/v1/chat/completions"
+
+        payload = {
+            "model": self.model_name,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        try:
+            response = requests.post(url, json=payload, timeout=120)
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.exceptions.ConnectionError:
+            raise RuntimeError(
+                f"Cannot connect to LLM at {self.llm_url}. "
+                "Is vLLM server running? Start with: python scripts/start_vllm.py"
+            )
+        except Exception as e:
+            raise RuntimeError(f"LLM call failed: {e}")
+
+    def generate(
+        self,
+        user_message: str,
+        context: Optional[List[Dict[str, str]]] = None,
+        **kwargs
+    ) -> str:
+        """
+        Generate response to user message.
+
+        Args:
+            user_message: User's input message
+            context: Optional conversation history
+            **kwargs: Additional arguments for LLM call
+
+        Returns:
+            Agent's response
+        """
+        messages = []
+
+        # Add system prompt
+        messages.append({"role": "system", "content": self.system_prompt})
+
+        # Add context if provided
+        if context:
+            messages.extend(context)
+
+        # Add user message
+        messages.append({"role": "user", "content": user_message})
+
+        return self._call_llm(messages, **kwargs)
