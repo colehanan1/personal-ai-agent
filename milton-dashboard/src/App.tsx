@@ -57,6 +57,9 @@ export default function App() {
             tokens: message.total_tokens,
             duration_ms: message.duration_ms,
           });
+          // Clear request ID and close WebSocket to prevent reconnection to stale request
+          setCurrentRequestId(null);
+          setWsUrl("");
           break;
       }
     },
@@ -72,6 +75,9 @@ export default function App() {
           status: "FAILED",
           error: error.message,
         });
+        // Clear request ID and close WebSocket to prevent reconnection to failed request
+        setCurrentRequestId(null);
+        setWsUrl("");
       }
     },
     [currentRequestId, updateRequest]
