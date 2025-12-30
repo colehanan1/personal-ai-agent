@@ -1,113 +1,166 @@
-# Milton
+# Milton - AI Agent System
 
-**NOTE**: This repository has been superseded by the **Cole's AI Agent System** located at `~/agent-system/`.
+Production-grade multi-agent AI system for Cole's research and automation needs.
 
-The original Milton was a simple morning-briefing helper. It has evolved into a production-grade multi-agent AI system with:
+## Overview
+
+Milton is a three-agent system built on Llama 3.1 405B with persistent memory, job scheduling, and comprehensive integrations.
+
+**Agents:**
 - **NEXUS** - Orchestration hub for briefings and request routing
 - **CORTEX** - Execution agent for tasks and code generation
 - **FRONTIER** - Research discovery agent for arXiv and news monitoring
-- Full memory system (Weaviate vector DB)
-- Job queue for overnight processing
-- Integration with Home Assistant, Weather, arXiv, News APIs
 
-## New System Location
+**Infrastructure:**
+- vLLM server (local LLM inference with OpenAI-compatible API)
+- Weaviate vector database (3-tier memory: short-term, working, long-term)
+- APScheduler job queue (overnight processing with SQLite persistence)
+- Structured logging system
 
-The full agent system is now at:
+**Integrations:**
+- Weather API (OpenWeather)
+- arXiv API (research paper discovery)
+- News API (current events monitoring)
+- Home Assistant (home automation control)
+- Calendar API (scheduling, stub implementation)
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+conda activate milton
+pip install -r requirements.txt
 ```
-~/agent-system/
+
+### 2. Configure Environment
+
+Edit [.env](.env) with your API keys:
+```bash
+# Already configured
+WEATHER_API_KEY=<your_key>
+WEATHER_LOCATION=St. Louis,US
+
+# Add these if you have them
+HOME_ASSISTANT_URL=http://your-ha-instance:8123
+HOME_ASSISTANT_TOKEN=<your_token>
+NEWS_API_KEY=<your_newsapi_key>
 ```
 
-See documentation:
-- `~/agent-system/README.md` - Full system documentation
-- `~/agent-system/SETUP_INSTRUCTIONS.txt` - Setup guide
-- `~/agent-system/SETUP_COMPLETE.txt` - Setup summary
+### 3. Start Services
 
-## Quick Start (New System)
+```bash
+# Start Weaviate (vector database)
+docker-compose up -d
 
-1. Navigate to agent system:
-   ```bash
-   cd ~/agent-system
-   ```
+# Start vLLM server (in another terminal)
+conda activate milton
+python scripts/start_vllm.py
+```
 
-2. Follow setup instructions:
-   ```bash
-   cat SETUP_INSTRUCTIONS.txt
-   ```
+### 4. Test the System
 
-3. Start services and run tests:
-   ```bash
-   # Start vLLM server
-   conda activate milton
-   python scripts/start_vllm.py
+```bash
+conda activate milton
+python test_all_systems.py
+```
 
-   # Start Weaviate (in another terminal)
-   docker-compose up -d
+### 5. Generate Your First Briefing
 
-   # Run tests
-   python test_all_systems.py
-   ```
+```python
+from agents.nexus import NEXUS
 
-4. Generate your first briefing:
-   ```python
-   from agents.nexus import NEXUS
-   nexus = NEXUS()
-   print(nexus.generate_morning_briefing())
-   ```
+nexus = NEXUS()
+briefing = nexus.generate_morning_briefing()
+print(briefing)
+```
 
 ## Architecture
 
 ```
-User (Cole) → NEXUS (orchestrator)
-              ├─→ CORTEX (executor)
-              ├─→ FRONTIER (discovery)
-              └─→ Integrations (HA, Weather, arXiv, News)
+User (Cole)
+    ↓
+NEXUS (orchestrator)
+    ├─→ CORTEX (executor)
+    ├─→ FRONTIER (discovery)
+    └─→ Integrations (Weather, arXiv, News, HA, Calendar)
+    └─→ Memory (Weaviate)
+    └─→ Job Queue (APScheduler)
 ```
 
-**Infrastructure**:
-- vLLM server (Llama 3.1 405B)
-- Weaviate vector database
-- APScheduler job queue
-- Structured logging system
+## Documentation
 
-## Original Milton (Legacy)
+- [System Documentation](docs/SYSTEM_DOCUMENTATION.md) - Complete system overview
+- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Original implementation strategy
+- [API Reference](docs/API_REFERENCE.md) - Integration APIs and usage (coming soon)
 
-The original simple briefing scripts are still in this directory but are deprecated in favor of the full agent system.
+## Directory Structure
 
-### Legacy Requirements
-- Python 3.10+
-- Dependencies: `requests`, `python-dotenv`, `feedparser`
-
-### Legacy Setup
-1) Create a `.env` in the repo root:
 ```
-WEATHER_API_KEY=your_openweather_key
-WEATHER_LOCATION=Newark,NJ
-```
-
-2) Install dependencies:
-```
-python3 -m pip install requests python-dotenv feedparser
-```
-
-### Legacy Usage
-- Generate the JSON brief:
-```
-python3 morning_briefing.py
+milton/
+├── agents/              # Agent implementations (NEXUS, CORTEX, FRONTIER)
+├── integrations/        # API wrappers (Weather, arXiv, News, HA, Calendar)
+├── memory/              # Weaviate memory operations
+├── job_queue/           # APScheduler job management
+├── agent_logging/       # Structured logging setup
+├── Prompts/             # System prompts (v1.1) - gitignored, local config
+├── scripts/             # Utility scripts (vLLM startup, etc.)
+├── docs/                # Documentation
+├── logs/                # Runtime logs (gitignored)
+├── outputs/             # Agent outputs (gitignored)
+├── cache/               # Model cache (gitignored)
+├── models/              # Model storage (gitignored)
+└── goals/               # Goal tracking (gitignored)
 ```
 
-- Render a text summary:
-```
-python3 render_briefing.py
+## Development
+
+### Running Tests
+
+```bash
+# Test all systems
+python test_all_systems.py
+
+# Test specific integration
+python test_weather.py
+python test_arxiv.py
 ```
 
-Output is written to `inbox/morning/brief_latest.json` and is ignored by git.
+### Adding New Integrations
 
-### Legacy Smoke checks
-```
-python3 test_weather.py
-python3 test_arxiv.py
-```
+1. Create a new file in [integrations/](integrations/)
+2. Implement the API wrapper class
+3. Add export to [integrations/__init__.py](integrations/__init__.py)
+4. Update agent prompts if needed
+
+### Modifying Agent Behavior
+
+Agent system prompts are in `/Prompts/` (gitignored for local customization):
+- `SHARED_CONTEXT.md` - Common context for all agents
+- `NEXUS_v1.1.md` - NEXUS-specific instructions
+- `CORTEX_v1.1.md` - CORTEX-specific instructions
+- `FRONTIER_v1.1.md` - FRONTIER-specific instructions
+
+See [MASTER_DEPLOY.md](Prompts/MASTER_DEPLOY.md) for prompt loading pattern.
+
+## Hardware Requirements
+
+**Recommended:**
+- AMD Ryzen 9 9950X (or equivalent)
+- NVIDIA RTX 5090 24GB (or 2x RTX 4090)
+- 128GB RAM
+- 500GB+ SSD for models
+
+**Minimum:**
+- 8-core CPU
+- 24GB VRAM GPU
+- 64GB RAM
+- 200GB SSD
+
+## License
+
+Private research project - not licensed for public use.
 
 ---
 
-**Migration Note**: The legacy scripts still work but are no longer actively developed. All new features and improvements are in the `~/agent-system/` codebase.
+**Status:** ✅ Fully migrated and operational (Dec 2024)
