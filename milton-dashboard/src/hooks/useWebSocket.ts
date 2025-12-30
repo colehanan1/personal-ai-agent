@@ -101,18 +101,21 @@ export function useWebSocket(
         onError?.(wsError);
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
         setIsConnected(false);
         wsRef.current = null;
         onClose?.();
 
-        // Attempt to reconnect with exponential backoff
-        reconnectAttemptsRef.current += 1;
-        const delay = getReconnectDelay();
+        // Only reconnect if connection was interrupted (not normal closure)
+        // Normal closure (code 1000) means stream completed successfully
+        if (event.code !== 1000) {
+          reconnectAttemptsRef.current += 1;
+          const delay = getReconnectDelay();
 
-        reconnectTimeoutRef.current = setTimeout(() => {
-          connect();
-        }, delay);
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connect();
+          }, delay);
+        }
       };
     } catch (err) {
       const connectError = new Error(
