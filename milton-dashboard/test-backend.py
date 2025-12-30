@@ -62,6 +62,8 @@ def classify_query(query):
 
 # Store query metadata for WebSocket to retrieve
 query_metadata = {}
+# Track processed requests to prevent duplicates
+processed_requests = set()
 
 # Mock ask endpoint
 @app.route('/api/ask', methods=['POST'])
@@ -99,6 +101,15 @@ def ask():
 @sock.route('/ws/request/<request_id>')
 def stream_request(ws, request_id):
     """Stream response messages based on query complexity"""
+
+    # PREVENT DUPLICATE PROCESSING
+    if request_id in processed_requests:
+        print(f"[WARN] Request {request_id} already processed - closing duplicate connection")
+        return
+
+    # Mark as processing
+    processed_requests.add(request_id)
+    print(f"[INFO] Processing request {request_id}")
 
     # Retrieve query metadata
     metadata = query_metadata.get(request_id, {})
@@ -165,6 +176,14 @@ def stream_request(ws, request_id):
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         }))
 
+        # Clean up metadata for this request
+        if request_id in query_metadata:
+            del query_metadata[request_id]
+
+        # Close WebSocket cleanly - just return, Flask-Sock handles the close
+        print(f"[INFO] Request {request_id} complete - connection closing")
+        return
+
     else:
         # COMPLEX query (research, code, etc.)
         thinking_messages = [
@@ -208,6 +227,14 @@ def stream_request(ws, request_id):
             "duration_ms": 3200,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         }))
+
+        # Clean up metadata for this request
+        if request_id in query_metadata:
+            del query_metadata[request_id]
+
+        # Close WebSocket cleanly - just return, Flask-Sock handles the close
+        print(f"[INFO] Request {request_id} complete - connection closing")
+        return
 
 if __name__ == '__main__':
     print("=" * 70)
