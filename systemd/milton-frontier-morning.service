@@ -1,0 +1,13 @@
+[Unit]
+Description=Milton Research Discovery (FRONTIER)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/cole-hanan/milton
+Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
+ExecStart=/home/cole-hanan/miniconda3/envs/milton/bin/python3 /home/cole-hanan/milton/scripts/frontier_morning.py
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=600

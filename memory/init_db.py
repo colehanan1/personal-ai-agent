@@ -20,7 +20,13 @@ def get_client() -> weaviate.WeaviateClient:
     Returns:
         Configured Weaviate client
     """
-    client = weaviate.connect_to_local(host="localhost", port=8080)
+    # Use skip_init_checks to bypass gRPC health check issues
+    # The REST API on port 8080 is what we actually use
+    client = weaviate.connect_to_local(
+        host="localhost",
+        port=8080,
+        skip_init_checks=True  # Skip gRPC health check, rely on REST API
+    )
     return client
 
 
@@ -53,7 +59,7 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
                     Property(name="agent", data_type=DataType.TEXT),
                     Property(name="content", data_type=DataType.TEXT),
                     Property(name="context", data_type=DataType.TEXT),
-                    Property(name="metadata", data_type=DataType.OBJECT),
+                    Property(name="metadata", data_type=DataType.TEXT),  # JSON string
                 ],
             )
             print("Created ShortTermMemory schema")
@@ -72,7 +78,7 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
                     Property(name="status", data_type=DataType.TEXT),
                     Property(name="content", data_type=DataType.TEXT),
                     Property(name="dependencies", data_type=DataType.TEXT_ARRAY),
-                    Property(name="metadata", data_type=DataType.OBJECT),
+                    Property(name="metadata", data_type=DataType.TEXT),  # JSON string
                 ],
             )
             print("Created WorkingMemory schema")
@@ -89,7 +95,7 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
                     Property(name="summary", data_type=DataType.TEXT),
                     Property(name="importance", data_type=DataType.NUMBER),
                     Property(name="tags", data_type=DataType.TEXT_ARRAY),
-                    Property(name="metadata", data_type=DataType.OBJECT),
+                    Property(name="metadata", data_type=DataType.TEXT),  # JSON string
                 ],
             )
             print("Created LongTermMemory schema")

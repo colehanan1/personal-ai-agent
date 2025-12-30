@@ -1,0 +1,11 @@
+[Unit]
+Description=Milton Morning Briefing Timer
+Requires=milton-nexus-morning.service
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

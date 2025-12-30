@@ -1,0 +1,11 @@
+[Unit]
+Description=Milton Research Discovery Timer
+Requires=milton-frontier-morning.service
+
+[Timer]
+OnCalendar=*-*-* 08:15:00
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
