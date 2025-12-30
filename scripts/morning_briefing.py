@@ -4,7 +4,7 @@ from pathlib import Path
 
 from integrations.weather import WeatherAPI
 from integrations.arxiv_api import ArxivAPI
-from schemas import morning_briefing_payload
+from scripts.schemas import morning_briefing_payload
 
 def generate_morning_brief(
     query: str = "cat:q-bio.NC AND (dopamine OR olfaction)",
