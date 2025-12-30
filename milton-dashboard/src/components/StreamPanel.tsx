@@ -129,9 +129,41 @@ export function StreamPanel({
           </div>
         ) : (
           <>
-            {messages.map((message, index) => (
-              <RequestMessage key={index} message={message} />
-            ))}
+            {(() => {
+              // Group messages: combine all consecutive tokens into one message
+              const grouped: StreamMessage[] = [];
+              let tokenAccumulator = "";
+
+              messages.forEach((message, index) => {
+                if (message.type === "token") {
+                  tokenAccumulator += message.content;
+                } else {
+                  // Flush accumulated tokens before non-token message
+                  if (tokenAccumulator) {
+                    grouped.push({
+                      type: "token",
+                      content: tokenAccumulator,
+                      timestamp: messages[index - 1]?.timestamp || message.timestamp,
+                    });
+                    tokenAccumulator = "";
+                  }
+                  grouped.push(message);
+                }
+              });
+
+              // Flush any remaining tokens
+              if (tokenAccumulator) {
+                grouped.push({
+                  type: "token",
+                  content: tokenAccumulator,
+                  timestamp: messages[messages.length - 1]?.timestamp || new Date().toISOString(),
+                });
+              }
+
+              return grouped.map((message, index) => (
+                <RequestMessage key={index} message={message} />
+              ));
+            })()}
             <div ref={messagesEndRef} />
           </>
         )}

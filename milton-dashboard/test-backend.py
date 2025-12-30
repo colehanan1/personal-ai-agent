@@ -60,6 +60,9 @@ def classify_query(query):
     # Default to NEXUS for simple queries
     return 'NEXUS', 'simple'
 
+# Store query metadata for WebSocket to retrieve
+query_metadata = {}
+
 # Mock ask endpoint
 @app.route('/api/ask', methods=['POST'])
 def ask():
@@ -77,12 +80,19 @@ def ask():
     else:
         agent_assigned, query_type = classify_query(query)
 
+    # Store metadata for WebSocket to retrieve
+    query_metadata[request_id] = {
+        'agent': agent_assigned,
+        'query_type': query_type,
+        'query': query
+    }
+
     return jsonify({
         "request_id": request_id,
         "status": "accepted",
         "agent_assigned": agent_assigned,
         "confidence": random.uniform(0.85, 0.98),
-        "query_type": query_type  # Pass to WebSocket
+        "query_type": query_type
     })
 
 # WebSocket endpoint for streaming
@@ -90,19 +100,27 @@ def ask():
 def stream_request(ws, request_id):
     """Stream response messages based on query complexity"""
 
-    # Get query type from first message (in real system this would be in session)
-    # For mock, we'll just detect from timing/context
-    # Let's make it simple for conversational, complex for research
+    # Retrieve query metadata
+    metadata = query_metadata.get(request_id, {})
+    query_type = metadata.get('query_type', 'simple')
+    agent = metadata.get('agent', 'NEXUS')
+    query = metadata.get('query', '')
 
-    # Receive initial context if sent
-    query_type = 'simple'  # Default
+    # Determine reasoning text based on query type
+    reasoning_map = {
+        'conversational': 'Simple conversational query',
+        'simple': 'Simple query - direct response',
+        'research': 'Research query - delegating to FRONTIER',
+        'code': 'Code analysis - delegating to CORTEX'
+    }
+    reasoning = reasoning_map.get(query_type, 'Processing query')
 
-    # Send routing message
+    # Send ONE routing message
     ws.send(json.dumps({
         "type": "routing",
-        "agent": "NEXUS",
+        "agent": agent,
         "confidence": 0.92,
-        "reasoning": "Simple conversational query",
+        "reasoning": reasoning,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     }))
     time.sleep(0.3)
