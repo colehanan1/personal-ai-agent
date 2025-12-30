@@ -3,7 +3,7 @@
  * 3-Panel Layout: Chat (left) | Stream (center) | Dashboard (right)
  */
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { StreamPanel } from "./components/StreamPanel";
 import { DashboardPanel } from "./components/DashboardPanel";
@@ -35,6 +35,8 @@ export default function App() {
       // Update current request based on message type
       if (!currentRequestId) return;
 
+      const req = getRequest(currentRequestId);
+
       switch (message.type) {
         case "routing":
           updateRequest(currentRequestId, {
@@ -45,7 +47,7 @@ export default function App() {
 
         case "token":
           updateRequest(currentRequestId, {
-            response: (currentRequest?.response || "") + message.content,
+            response: (req?.response || "") + message.content,
           });
           break;
 
@@ -58,7 +60,7 @@ export default function App() {
           break;
       }
     },
-    [currentRequestId, currentRequest, updateRequest]
+    [currentRequestId, updateRequest, getRequest]
   );
 
   // WebSocket error handler
@@ -188,7 +190,7 @@ export default function App() {
         <div className="flex-1 overflow-hidden">
           <StreamPanel
             messages={streamMessages}
-            currentRequest={currentRequest}
+            currentRequest={currentRequest || null}
             isConnected={isConnected}
           />
         </div>
@@ -197,7 +199,7 @@ export default function App() {
         <div className="w-1/6 border-l border-slate-800 overflow-hidden">
           <DashboardPanel
             systemState={systemState}
-            currentRequest={currentRequest}
+            currentRequest={currentRequest || null}
             isLoading={systemLoading}
             error={systemError}
           />

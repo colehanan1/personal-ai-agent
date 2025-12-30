@@ -3,7 +3,7 @@
  * Displays live response streaming with auto-scroll
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RequestMessage } from "./RequestMessage";
 import { downloadFile, exportRequestAsJSON, exportRequestAsMarkdown } from "../api";
 import type { StreamMessage, Request } from "../types";
@@ -21,7 +21,7 @@ export function StreamPanel({
 }: StreamPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [autoScroll, setAutoScroll] = React.useState(true);
+  const [autoScroll, setAutoScroll] = useState(true);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {

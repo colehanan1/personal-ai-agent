@@ -24,11 +24,6 @@ export function DashboardPanel({
     return new Intl.NumberFormat("en-US").format(num);
   };
 
-  const formatBytes = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  };
 
   return (
     <div className="flex flex-col h-full bg-slate-900 p-4 gap-4 overflow-y-auto">
