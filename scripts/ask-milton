@@ -1,0 +1,25 @@
+#!/bin/bash
+# Quick command to ask Milton a question from SSH
+# Usage: ask-milton "Your question here"
+
+if [ -z "$1" ]; then
+    echo "Usage: ask-milton \"Your question here\""
+    echo ""
+    echo "Examples:"
+    echo "  ask-milton \"What is the weather?\""
+    echo "  ask-milton \"Write a Python function for factorial\""
+    exit 1
+fi
+
+TOPIC="milton-briefing-code-ask"
+QUESTION="$1"
+
+echo "📤 Sending to Milton: $QUESTION"
+curl -s -d "$QUESTION" "ntfy.sh/$TOPIC" > /dev/null
+
+if [ $? -eq 0 ]; then
+    echo "✅ Question sent!"
+    echo "📱 Check your iPhone for the response (milton-briefing-code)"
+else
+    echo "❌ Failed to send question"
+fi

@@ -1,0 +1,3 @@
+#!/bin/bash
+# Quick briefing command - just type "briefing" via SSH
+/home/cole-hanan/milton/scripts/send_briefing_to_phone.py --method print
