@@ -2,11 +2,54 @@
 Weaviate Memory Operations
 CRUD operations for short-term, working, and long-term memory.
 """
+import json
 import weaviate
 from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 from .init_db import get_client
+
+
+def _serialize_metadata(metadata: Optional[Dict[str, Any]]) -> str:
+    if not metadata:
+        return "{}"
+    return json.dumps(metadata)
+
+
+def _deserialize_metadata(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {"raw": value}
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
+    return {"value": value}
+
+
+def _now_rfc3339() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_timestamp(value: Any) -> Optional[datetime]:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        text = value.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 class MemoryOperations:
@@ -56,11 +99,11 @@ class MemoryOperations:
 
         memory_id = collection.data.insert(
             properties={
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": _now_rfc3339(),
                 "agent": agent,
                 "content": content,
                 "context": context,
-                "metadata": metadata or {},
+                "metadata": _serialize_metadata(metadata),
             }
         )
 
@@ -81,14 +124,16 @@ class MemoryOperations:
         """
         collection = self.client.collections.get("ShortTermMemory")
 
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         query = collection.query.fetch_objects(limit=100)
 
         results = []
         for obj in query.objects:
             props = obj.properties
-            if datetime.fromisoformat(props["timestamp"]) >= cutoff:
+            parsed = _parse_timestamp(props.get("timestamp"))
+            if parsed and parsed >= cutoff:
+                props["metadata"] = _deserialize_metadata(props.get("metadata"))
                 if agent is None or props["agent"] == agent:
                     results.append({"id": str(obj.uuid), **props})
 
@@ -106,14 +151,15 @@ class MemoryOperations:
         """
         collection = self.client.collections.get("ShortTermMemory")
 
-        cutoff = datetime.now() - timedelta(hours=hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
         query = collection.query.fetch_objects(limit=1000)
 
         deleted = 0
         for obj in query.objects:
             props = obj.properties
-            if datetime.fromisoformat(props["timestamp"]) < cutoff:
+            parsed = _parse_timestamp(props.get("timestamp"))
+            if parsed and parsed < cutoff:
                 collection.data.delete_by_id(obj.uuid)
                 deleted += 1
 
@@ -151,13 +197,13 @@ class MemoryOperations:
         memory_id = collection.data.insert(
             properties={
                 "task_id": task_id,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": _now_rfc3339(),
                 "agent": agent,
                 "task_type": task_type,
                 "status": status,
                 "content": content,
                 "dependencies": dependencies or [],
-                "metadata": metadata or {},
+                "metadata": _serialize_metadata(metadata),
             }
         )
 
@@ -208,6 +254,7 @@ class MemoryOperations:
         results = []
         for obj in query.objects:
             props = obj.properties
+            props["metadata"] = _deserialize_metadata(props.get("metadata"))
             if (status is None or props["status"] == status) and (
                 agent is None or props["agent"] == agent
             ):
@@ -261,12 +308,12 @@ class MemoryOperations:
 
         memory_id = collection.data.insert(
             properties={
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": _now_rfc3339(),
                 "category": category,
                 "summary": summary,
                 "importance": importance,
                 "tags": tags or [],
-                "metadata": metadata or {},
+                "metadata": _serialize_metadata(metadata),
             }
         )
 
@@ -298,6 +345,7 @@ class MemoryOperations:
         results = []
         for obj in query.objects:
             props = obj.properties
+            props["metadata"] = _deserialize_metadata(props.get("metadata"))
 
             # Apply filters
             if category and props["category"] != category:

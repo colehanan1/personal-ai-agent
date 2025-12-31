@@ -31,6 +31,7 @@ load_dotenv(dotenv_path=ROOT_DIR / ".env")
 from agents.cortex import CORTEX
 from agents.frontier import FRONTIER
 from agents.nexus import NEXUS
+from memory.init_db import create_schema, get_client
 from memory.operations import MemoryOperations
 
 logging.basicConfig(
@@ -62,8 +63,11 @@ _PROCESSED_LOCK = threading.Lock()
 
 _VECTOR_COUNT = 0
 _VECTOR_COUNT_LOCK = threading.Lock()
+_MEMORY_CACHE: Dict[str, Any] = {"timestamp": 0.0, "vector_count": 0}
 
 _STATUS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "llm_up": True, "weaviate_up": True}
+_SCHEMA_READY = False
+_SCHEMA_LOCK = threading.Lock()
 
 nexus = NEXUS(model_url=MODEL_URL, model_name=MODEL_NAME)
 cortex = CORTEX(model_url=MODEL_URL, model_name=MODEL_NAME)
@@ -109,10 +113,10 @@ def _chunk_text(text: str, words_per_chunk: int = 6) -> Iterable[str]:
 
 def _check_url(url: str, timeout: float = 1.5) -> bool:
     try:
-        headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+        headers = {}
+        if LLM_API_KEY and url.startswith(MODEL_URL.rstrip("/")):
+            headers = {"Authorization": f"Bearer {LLM_API_KEY}"}
         resp = requests.get(url, timeout=timeout, headers=headers)
-        if resp.status_code == 401:
-            return False
         return resp.status_code == 200
     except Exception:
         return False
@@ -130,6 +134,27 @@ def _get_status_flags() -> Tuple[bool, bool]:
     _STATUS_CACHE["llm_up"] = llm_up
     _STATUS_CACHE["weaviate_up"] = weaviate_up
     return llm_up, weaviate_up
+
+
+def _ensure_schema() -> bool:
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return True
+
+    with _SCHEMA_LOCK:
+        if _SCHEMA_READY:
+            return True
+        try:
+            client = get_client()
+            create_schema(client)
+            client.close()
+            _SCHEMA_READY = True
+            logger.info("Weaviate schema ready")
+            return True
+        except Exception as exc:
+            logger.warning("Weaviate schema init failed: %s", exc)
+            _SCHEMA_READY = False
+            return False
 
 
 def _route_query(query: str, agent_override: Optional[str]) -> Dict[str, Any]:
@@ -160,9 +185,11 @@ def _route_query(query: str, agent_override: Optional[str]) -> Dict[str, Any]:
         }
 
 
-def _run_agent(agent_name: str, query: str) -> str:
+def _run_agent(agent_name: str, query: str, use_web: Optional[bool] = None) -> str:
     agent = AGENT_MAP[agent_name]
-    return agent._call_llm(query, system_prompt=agent.system_prompt)
+    if agent_name == "NEXUS" and hasattr(agent, "answer"):
+        return agent.answer(query, use_web=use_web)
+    return agent._call_llm(query, system_prompt=agent.system_prompt, max_tokens=300)
 
 
 def _run_integration(target: str, query: str) -> str:
@@ -191,7 +218,10 @@ def _run_integration(target: str, query: str) -> str:
 
 def _store_memory(agent: str, query: str, response: str) -> Optional[str]:
     global _VECTOR_COUNT
+    global _SCHEMA_READY
     try:
+        if not _ensure_schema():
+            return None
         with MemoryOperations() as mem:
             vector_id = mem.add_short_term(
                 agent=agent,
@@ -204,12 +234,36 @@ def _store_memory(agent: str, query: str, response: str) -> Optional[str]:
         return vector_id
     except Exception as exc:
         logger.warning("Memory store failed: %s", exc)
+        _SCHEMA_READY = False
         return None
 
 
 def _get_memory_snapshot() -> Tuple[int, float]:
+    global _VECTOR_COUNT
+    now = time.time()
     with _VECTOR_COUNT_LOCK:
-        vector_count = _VECTOR_COUNT
+        fallback_count = _VECTOR_COUNT
+
+    if now - _MEMORY_CACHE["timestamp"] < 5:
+        vector_count = _MEMORY_CACHE["vector_count"]
+    else:
+        vector_count = fallback_count
+        if _ensure_schema():
+            try:
+                with MemoryOperations() as mem:
+                    collection = mem.client.collections.get("ShortTermMemory")
+                    result = collection.aggregate.over_all(total_count=True)
+                    vector_count = int(result.total_count or 0)
+            except Exception as exc:
+                logger.warning("Memory count lookup failed: %s", exc)
+
+        _MEMORY_CACHE["timestamp"] = now
+        _MEMORY_CACHE["vector_count"] = vector_count
+
+        with _VECTOR_COUNT_LOCK:
+            if vector_count > _VECTOR_COUNT:
+                _VECTOR_COUNT = vector_count
+
     memory_mb = round(vector_count * 0.0069, 1)
     return vector_count, memory_mb
 
@@ -223,6 +277,9 @@ def ask() -> Any:
         return jsonify({"error": "Missing 'query'"}), 400
 
     agent_override = data.get("agent")
+    use_web = data.get("use_web")
+    if use_web is not None:
+        use_web = bool(use_web)
     if agent_override:
         agent_override = str(agent_override).upper()
         if agent_override not in AGENT_MAP:
@@ -254,6 +311,7 @@ def ask() -> Any:
             "created_at": created_at,
             "duration_ms": None,
             "response": None,
+            "use_web": use_web,
         }
 
     return jsonify(
@@ -303,7 +361,9 @@ def stream_request(ws, request_id: str) -> None:
         if integration_target:
             response_text = _run_integration(integration_target, req["query"])
         else:
-            response_text = _run_agent(agent_name, req["query"])
+            response_text = _run_agent(
+                agent_name, req["query"], use_web=req.get("use_web")
+            )
     except Exception as exc:
         error_text = f"Error: {exc}"
         response_text = error_text

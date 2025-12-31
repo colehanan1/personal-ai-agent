@@ -7,10 +7,12 @@ from weaviate.classes.config import Configure, Property, DataType
 from typing import Optional
 import os
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 load_dotenv()
 
 WEAVIATE_URL = os.getenv("WEAVIATE_URL", "http://localhost:8080")
+WEAVIATE_GRPC_PORT = int(os.getenv("WEAVIATE_GRPC_PORT", "50051"))
 
 
 def get_client() -> weaviate.WeaviateClient:
@@ -22,10 +24,14 @@ def get_client() -> weaviate.WeaviateClient:
     """
     # Use skip_init_checks to bypass gRPC health check issues
     # The REST API on port 8080 is what we actually use
+    parsed = urlparse(WEAVIATE_URL)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 8080
     client = weaviate.connect_to_local(
-        host="localhost",
-        port=8080,
-        skip_init_checks=True  # Skip gRPC health check, rely on REST API
+        host=host,
+        port=port,
+        grpc_port=WEAVIATE_GRPC_PORT,
+        skip_init_checks=True,  # Skip gRPC health check, rely on REST API
     )
     return client
 
@@ -54,6 +60,7 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
                 name="ShortTermMemory",
                 description="Recent interactions and events (24-48 hours)",
                 vectorizer_config=Configure.Vectorizer.none(),
+                vector_index_config=Configure.VectorIndex.none(),
                 properties=[
                     Property(name="timestamp", data_type=DataType.DATE),
                     Property(name="agent", data_type=DataType.TEXT),
@@ -70,6 +77,7 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
                 name="WorkingMemory",
                 description="Active context for ongoing tasks",
                 vectorizer_config=Configure.Vectorizer.none(),
+                vector_index_config=Configure.VectorIndex.none(),
                 properties=[
                     Property(name="task_id", data_type=DataType.TEXT),
                     Property(name="timestamp", data_type=DataType.DATE),
@@ -89,6 +97,7 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
                 name="LongTermMemory",
                 description="Compressed historical data and learnings",
                 vectorizer_config=Configure.Vectorizer.none(),
+                vector_index_config=Configure.VectorIndex.none(),
                 properties=[
                     Property(name="timestamp", data_type=DataType.DATE),
                     Property(name="category", data_type=DataType.TEXT),

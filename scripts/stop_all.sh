@@ -58,13 +58,30 @@ stop_from_pid() {
 
 main() {
   stop_from_pid "Dashboard" "${LOG_DIR}/dashboard.log.pid" "milton-dashboard"
-  stop_from_pid "API server" "${LOG_DIR}/api_server.log.pid" "scripts/start_api_server.py"
-  stop_from_pid "vLLM" "${LOG_DIR}/vllm.log.pid" "scripts/start_vllm.py"
+stop_from_pid "API server" "${LOG_DIR}/api_server.log.pid" "scripts/start_api_server.py"
+stop_from_pid "vLLM" "${LOG_DIR}/vllm.log.pid" "scripts/start_vllm.py"
+
+  local docker_cmd=""
+  if [ -n "${DOCKER_CMD:-}" ]; then
+    docker_cmd="${DOCKER_CMD}"
+  elif [ "${DOCKER_SUDO:-}" = "1" ]; then
+    docker_cmd="sudo docker"
+  fi
 
   if command -v docker >/dev/null 2>&1; then
-    log "Stopping Docker services (docker compose down)..."
-    if ! docker compose down; then
-      warn "Docker compose down failed. Try: sudo docker compose down"
+    if [ -z "${docker_cmd}" ] && docker info >/dev/null 2>&1; then
+      docker_cmd="docker"
+    elif [ -z "${docker_cmd}" ] && command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+      docker_cmd="sudo docker"
+    fi
+
+    if [ -n "${docker_cmd}" ]; then
+      log "Stopping Docker services (${docker_cmd} compose down)..."
+      if ! ${docker_cmd} compose down; then
+        warn "Docker compose down failed."
+      fi
+    else
+      warn "Docker not accessible. Run: sudo docker compose down"
     fi
   else
     warn "Docker not found; skipping docker compose down."

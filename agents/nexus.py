@@ -10,8 +10,16 @@ from datetime import datetime
 from dotenv import load_dotenv
 import logging
 import sys
+import re
 
-from integrations import HomeAssistantAPI, WeatherAPI, ArxivAPI, NewsAPI, CalendarAPI
+from integrations import (
+    HomeAssistantAPI,
+    WeatherAPI,
+    ArxivAPI,
+    NewsAPI,
+    CalendarAPI,
+    WebSearchAPI,
+)
 
 load_dotenv()
 
@@ -43,10 +51,14 @@ class NEXUS:
             model_name: Model name (defaults to env var)
         """
         self.model_url = (
-            model_url or os.getenv("OLLAMA_API_URL", "http://localhost:8000")
+            model_url
+            or os.getenv("LLM_API_URL")
+            or os.getenv("OLLAMA_API_URL", "http://localhost:8000")
         ).rstrip("/")
-        self.model_name = os.getenv(
-            "OLLAMA_MODEL", "meta-llama/Llama-3.1-405B-Instruct"
+        self.model_name = (
+            model_name
+            or os.getenv("LLM_MODEL")
+            or os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-405B-Instruct")
         )
         self.system_prompt = self._load_system_prompt()
 
@@ -56,6 +68,15 @@ class NEXUS:
         self.arxiv = ArxivAPI()  # Note: Milton uses ArxivAPI not ArXivAPI
         self.news = NewsAPI()
         self.calendar = CalendarAPI()
+        self.web_search = WebSearchAPI()
+
+        self.web_lookup_enabled = str(os.getenv("WEB_LOOKUP", "")).lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        self.web_lookup_max_results = int(os.getenv("WEB_LOOKUP_MAX_RESULTS", "5"))
 
         logger.info("NEXUS agent initialized")
 
@@ -120,7 +141,7 @@ Available options:
 3. Direct integration - For simple queries (weather, home control, calendar)
 4. NEXUS (self) - For conversation and general assistance
 
-Respond with JSON:
+IMPORTANT: Respond with ONLY valid JSON, no other text:
 {{
     "target": "CORTEX|FRONTIER|integration_name|NEXUS",
     "reasoning": "explanation",
@@ -128,17 +149,75 @@ Respond with JSON:
 }}
 """
 
-        response = self._call_llm(prompt, system_prompt=self.system_prompt)
+        response = self._call_llm(prompt, system_prompt=self.system_prompt, max_tokens=200)
+        routing = self._parse_routing_response(response)
+        return routing
 
-        try:
-            json_start = response.find("{")
-            json_end = response.rfind("}") + 1
-            routing = json.loads(response[json_start:json_end])
-        except Exception as e:
-            logger.error(f"Failed to parse routing decision: {e}")
-            routing = {"target": "NEXUS", "reasoning": "Unable to parse routing"}
+    def _parse_routing_response(self, response: str) -> Dict[str, Any]:
+        json_block = self._extract_json_block(response)
+        routing: Dict[str, Any] = {}
+
+        if json_block:
+            try:
+                routing = json.loads(json_block)
+            except Exception as exc:
+                logger.warning("Failed to parse routing JSON: %s", exc)
+
+        if not routing:
+            target_match = re.search(
+                r"target\s*[:=]\s*['\"]?([A-Za-z_]+)", response, re.IGNORECASE
+            )
+            target = target_match.group(1).upper() if target_match else "NEXUS"
+            routing = {
+                "target": target,
+                "reasoning": "Routing parse failed; defaulting to NEXUS",
+                "context": {},
+            }
+
+        if "context" not in routing or not isinstance(routing.get("context"), dict):
+            routing["context"] = {}
 
         return routing
+
+    def _extract_json_block(self, response: str) -> str:
+        # Try to extract from markdown code fence
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
+        if fenced:
+            return fenced.group(1)
+
+        # Find the first complete JSON object (balanced braces)
+        start = response.find("{")
+        if start == -1:
+            return ""
+
+        brace_count = 0
+        in_string = False
+        escape_next = False
+
+        for i in range(start, len(response)):
+            char = response[i]
+
+            if escape_next:
+                escape_next = False
+                continue
+
+            if char == '\\':
+                escape_next = True
+                continue
+
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+
+            if not in_string:
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        return response[start : i + 1]
+
+        return ""
 
     def generate_morning_briefing(self) -> str:
         """
@@ -287,12 +366,47 @@ Respond with JSON:
         routing = self.route_request(message)
 
         if routing["target"] == "NEXUS":
-            # Handle directly
-            response = self._call_llm(message, system_prompt=self.system_prompt)
-            return response
+            return self.answer(message)
         else:
             # Delegate to other agent/integration
             return f"Routing to {routing['target']}: {routing['reasoning']}"
+
+    def _should_use_web_lookup(self, message: str, use_web: Optional[bool]) -> bool:
+        if use_web is not None:
+            return bool(use_web)
+        if self.web_lookup_enabled:
+            return True
+        trigger_terms = ("source", "sources", "cite", "citation", "reference")
+        return any(term in message.lower() for term in trigger_terms)
+
+    def answer(self, message: str, use_web: Optional[bool] = None) -> str:
+        if self._should_use_web_lookup(message, use_web):
+            return self.answer_with_web_lookup(message)
+        return self._call_llm(message, system_prompt=self.system_prompt)
+
+    def answer_with_web_lookup(self, message: str) -> str:
+        results = self.web_search.search(
+            message, max_results=self.web_lookup_max_results
+        )
+        if not results:
+            return self._call_llm(message, system_prompt=self.system_prompt)
+
+        sources_block = "\n".join(
+            f"[{i}] {item['title']} - {item['url']}"
+            for i, item in enumerate(results, 1)
+        )
+
+        prompt = (
+            "Answer the question using the web sources below. "
+            "Cite sources inline like [1]. If the sources don't cover the "
+            "claim, say you couldn't verify it.\n\n"
+            f"Question: {message}\n\nSources:\n{sources_block}"
+        )
+        response = self._call_llm(prompt, system_prompt=self.system_prompt)
+
+        if "Sources:" not in response:
+            response = f"{response.strip()}\n\nSources:\n{sources_block}"
+        return response
 
 
 if __name__ == "__main__":

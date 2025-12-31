@@ -4,10 +4,12 @@ services:
     image: semitechnologies/weaviate:latest
     ports:
       - "8080:8080"
+      - "50051:50051"
     environment:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_APIKEY_ENABLED: 'false'
       PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      CLUSTER_HOSTNAME: weaviate
     volumes:
       - weaviate_data:/var/lib/weaviate
 volumes:

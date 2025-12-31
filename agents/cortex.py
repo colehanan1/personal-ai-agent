@@ -41,10 +41,14 @@ class CORTEX:
             model_name: Model name (defaults to env var)
         """
         self.model_url = (
-            model_url or os.getenv("OLLAMA_API_URL", "http://localhost:8000")
+            model_url
+            or os.getenv("LLM_API_URL")
+            or os.getenv("OLLAMA_API_URL", "http://localhost:8000")
         ).rstrip("/")
-        self.model_name = os.getenv(
-            "OLLAMA_MODEL", "meta-llama/Llama-3.1-405B-Instruct"
+        self.model_name = (
+            model_name
+            or os.getenv("LLM_MODEL")
+            or os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-405B-Instruct")
         )
         self.system_prompt = self._load_system_prompt()
 

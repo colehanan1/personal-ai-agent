@@ -45,6 +45,28 @@ is_up() {
   return 1
 }
 
+detect_docker_cmd() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo ""
+    return 1
+  fi
+
+  if docker info >/dev/null 2>&1; then
+    echo "docker"
+    return 0
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo -n docker info >/dev/null 2>&1; then
+      echo "sudo docker"
+      return 0
+    fi
+  fi
+
+  echo ""
+  return 1
+}
+
 wait_for_url() {
   local name="$1"
   local url="$2"
@@ -82,13 +104,22 @@ main() {
     exit 1
   fi
 
-  if command -v docker >/dev/null 2>&1; then
-    log "Ensuring Weaviate is running (docker compose up -d)"
-    if ! docker compose up -d; then
+  local docker_cmd
+  docker_cmd="${DOCKER_CMD:-}"
+  if [ -z "${docker_cmd}" ]; then
+    if [ "${DOCKER_SUDO:-}" = "1" ]; then
+      docker_cmd="sudo docker"
+    else
+      docker_cmd="$(detect_docker_cmd)"
+    fi
+  fi
+  if [ -n "${docker_cmd}" ]; then
+    log "Ensuring Weaviate is running (${docker_cmd} compose up -d)"
+    if ! ${docker_cmd} compose up -d; then
       warn "Docker compose failed. Weaviate may be down."
     fi
   else
-    warn "Docker not found. Skipping Weaviate startup."
+    warn "Docker not accessible. Run: sudo docker compose up -d"
   fi
 
   if is_up "http://localhost:8000/v1/models"; then
@@ -125,6 +156,7 @@ main() {
 
   wait_for_url "vLLM" "http://localhost:8000/v1/models" 180 || true
   wait_for_url "API server" "http://localhost:8001/api/system-state" 60 || true
+  wait_for_url "Weaviate" "http://localhost:8080/v1/meta" 60 || true
   wait_for_url "Dashboard" "http://localhost:3000" 30 || true
 
   log "Done. Open http://localhost:3000"

@@ -7,9 +7,12 @@ import sys
 import os
 import time
 from typing import Dict, Any, List
+from pathlib import Path
+from dotenv import load_dotenv
 
-# Add current directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR))
+load_dotenv(dotenv_path=ROOT_DIR / ".env")
 
 # Test results
 test_results: List[Dict[str, Any]] = []
@@ -40,8 +43,16 @@ def test_vllm_connectivity() -> bool:
     try:
         import requests
 
-        url = "http://localhost:8000/v1/models"
-        response = requests.get(url, timeout=5)
+        api_url = os.getenv("LLM_API_URL", "http://localhost:8000").rstrip("/")
+        api_key = (
+            os.getenv("LLM_API_KEY")
+            or os.getenv("VLLM_API_KEY")
+            or os.getenv("OLLAMA_API_KEY")
+        )
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+        url = f"{api_url}/v1/models"
+        response = requests.get(url, timeout=5, headers=headers)
 
         if response.status_code == 200:
             print_test("vLLM Server Connectivity", "pass", "Server responding")
@@ -71,16 +82,25 @@ def test_vllm_inference() -> bool:
     try:
         import requests
 
-        url = "http://localhost:8000/v1/chat/completions"
+        api_url = os.getenv("LLM_API_URL", "http://localhost:8000").rstrip("/")
+        model = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-405B-Instruct")
+        api_key = (
+            os.getenv("LLM_API_KEY")
+            or os.getenv("VLLM_API_KEY")
+            or os.getenv("OLLAMA_API_KEY")
+        )
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+        url = f"{api_url}/v1/chat/completions"
 
         payload = {
-            "model": "meta-llama/Llama-3.1-405B-Instruct",
+            "model": model,
             "messages": [{"role": "user", "content": "Say 'test' and nothing else."}],
             "max_tokens": 10,
         }
 
         start_time = time.time()
-        response = requests.post(url, json=payload, timeout=30)
+        response = requests.post(url, json=payload, timeout=30, headers=headers)
         elapsed = time.time() - start_time
 
         if response.status_code == 200:
@@ -106,13 +126,13 @@ def test_vllm_inference() -> bool:
 def test_weaviate_connectivity() -> bool:
     """Test Weaviate connectivity."""
     try:
-        import weaviate
+        import requests
 
-        client = weaviate.connect_to_local(host="localhost", port=8080)
+        weaviate_url = os.getenv("WEAVIATE_URL", "http://localhost:8080").rstrip("/")
+        response = requests.get(f"{weaviate_url}/v1/meta", timeout=5)
 
-        if client.is_ready():
+        if response.status_code == 200:
             print_test("Weaviate Connectivity", "pass", "Database ready")
-            client.close()
             return True
         else:
             print_test("Weaviate Connectivity", "fail", "Database not ready")
@@ -250,9 +270,9 @@ def test_weather_api() -> bool:
 def test_arxiv_api() -> bool:
     """Test arXiv API integration."""
     try:
-        from integrations import ArXivAPI
+        from integrations import ArxivAPI
 
-        arxiv = ArXivAPI()
+        arxiv = ArxivAPI()
 
         # Search for a common topic
         papers = arxiv.search_papers("cat:cs.AI AND ti:transformer", max_results=5)
@@ -298,7 +318,7 @@ def test_news_api() -> bool:
 def test_job_queue() -> bool:
     """Test job queue system."""
     try:
-        from queue import JobManager
+        from job_queue import JobManager
         from datetime import datetime, timedelta
 
         manager = JobManager()
@@ -331,7 +351,7 @@ def test_job_queue() -> bool:
 def test_logging() -> bool:
     """Test logging system."""
     try:
-        from logging import setup_logging
+        from agent_logging import setup_logging
         import os
 
         logger = setup_logging("TEST_AGENT", console_output=False)
