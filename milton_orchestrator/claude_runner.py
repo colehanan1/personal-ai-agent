@@ -92,6 +92,7 @@ class ClaudeRunner:
                 "supports_print_mode": "--print" in help_text,
                 "supports_yes_flag": "-y" in help_text or "--yes" in help_text,
                 "supports_auto_approve": "--auto-approve" in help_text,
+                "supports_skip_permissions": "--dangerously-skip-permissions" in help_text,
             }
 
             logger.info(f"Detected capabilities: {capabilities}")
@@ -106,6 +107,7 @@ class ClaudeRunner:
                 "supports_print_mode": False,
                 "supports_yes_flag": False,
                 "supports_auto_approve": False,
+                "supports_skip_permissions": False,
             }
 
     def run(
@@ -166,6 +168,11 @@ class ClaudeRunner:
             cmd.append("-y")
         elif capabilities["supports_auto_approve"]:
             cmd.append("--auto-approve")
+
+        # Add skip permissions flag for fully automated execution
+        if capabilities["supports_skip_permissions"]:
+            cmd.append("--dangerously-skip-permissions")
+            logger.info("Using --dangerously-skip-permissions for automated execution")
 
         # Add print mode if available
         if capabilities["supports_print_mode"]:
