@@ -2,21 +2,35 @@
 Enhanced Perplexity API client with structured prompting support
 
 Features:
-- Structured prompt handling
+- Structured prompt handling with JSON schema (2025)
 - Citation verification
 - Response validation
 - Token usage tracking
 - Error handling with retries
+- Pydantic model integration for structured outputs
+
+References:
+- https://docs.perplexity.ai/guides/structured-outputs
+- Citation tokens are FREE in Perplexity 2025 (except Deep Research)
 """
 
 import logging
 import time
-from typing import Optional, Dict, Any, List
+import json
+from typing import Optional, Dict, Any, List, Type
 from dataclasses import dataclass
 
 import requests
+from pydantic import BaseModel, ValidationError
 
 from .prompting_system import StructuredPrompt, validate_prompt_structure
+from .response_schemas import (
+    ResearchResponse,
+    SpecificationResponse,
+    DocumentationSearchResponse,
+    QuickFactResponse,
+    get_schema_for_prompt_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +104,8 @@ class PerplexityAPIClient:
         self,
         prompt: StructuredPrompt,
         max_tokens: Optional[int] = None,
+        response_schema: Optional[Type[BaseModel]] = None,
+        use_json_schema: bool = True,
     ) -> Optional[PerplexityResponse]:
         """
         Execute a structured prompt with Perplexity API.
@@ -97,12 +113,18 @@ class PerplexityAPIClient:
         Args:
             prompt: StructuredPrompt containing system message, user prompt, and API params
             max_tokens: Maximum tokens to generate (optional)
+            response_schema: Pydantic model for JSON schema validation (2025 feature)
+            use_json_schema: Enable JSON schema structured outputs (default: True)
 
         Returns:
             PerplexityResponse with content and metadata, or None on failure
 
         Example:
-            response = client.execute_structured_prompt(prompt)
+            response = client.execute_structured_prompt(
+                prompt,
+                response_schema=ResearchResponse,
+                use_json_schema=True
+            )
             if response and response.has_citations:
                 print(f"Answer: {response.content}")
                 print(f"Sources: {response.citations}")
@@ -127,9 +149,22 @@ class PerplexityAPIClient:
         if max_tokens:
             payload["max_tokens"] = max_tokens
 
+        # Add JSON schema response_format if requested (2025 feature)
+        if use_json_schema and response_schema:
+            try:
+                schema = response_schema.model_json_schema()
+                payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": schema
+                }
+                logger.info(f"Using JSON schema for response: {response_schema.__name__}")
+            except Exception as e:
+                logger.warning(f"Failed to add JSON schema: {e}. Continuing without schema.")
+
         logger.info(
             f"Executing structured prompt: model={payload.get('model')}, "
-            f"user_prompt_len={len(prompt.user_prompt)} chars"
+            f"user_prompt_len={len(prompt.user_prompt)} chars, "
+            f"json_schema={'enabled' if use_json_schema and response_schema else 'disabled'}"
         )
 
         # Execute with retry logic
@@ -143,7 +178,16 @@ class PerplexityAPIClient:
                 response.raise_for_status()
 
                 data = response.json()
-                return self._parse_response(data, prompt.api_parameters)
+
+                # If using JSON schema, validate and parse the structured response
+                if use_json_schema and response_schema:
+                    return self._parse_json_schema_response(
+                        data,
+                        response_schema,
+                        prompt.api_parameters
+                    )
+                else:
+                    return self._parse_response(data, prompt.api_parameters)
 
             except requests.exceptions.Timeout:
                 logger.warning(f"Timeout (attempt {attempt + 1}/{self.max_retries})")
@@ -166,6 +210,114 @@ class PerplexityAPIClient:
                 return None
 
         return None
+
+    def _parse_json_schema_response(
+        self,
+        data: Dict[str, Any],
+        schema_model: Type[BaseModel],
+        api_params: Dict[str, Any],
+    ) -> Optional[PerplexityResponse]:
+        """
+        Parse Perplexity API response with JSON schema validation.
+
+        Args:
+            data: Raw API response data
+            schema_model: Pydantic model for validation
+            api_params: Original API parameters used
+
+        Returns:
+            PerplexityResponse with validated structured content
+        """
+        try:
+            # Extract raw content
+            raw_content = data["choices"][0]["message"]["content"]
+
+            # Parse JSON content
+            try:
+                json_content = json.loads(raw_content)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {e}")
+                logger.debug(f"Raw content: {raw_content[:500]}")
+                # Fallback to regular parsing
+                return self._parse_response(data, api_params)
+
+            # Validate against Pydantic schema
+            try:
+                validated_data = schema_model.model_validate(json_content)
+                logger.info(f"JSON schema validation successful: {schema_model.__name__}")
+            except ValidationError as e:
+                logger.warning(f"JSON schema validation failed: {e}")
+                logger.debug(f"JSON content: {json_content}")
+                # Still return the content, but log validation issues
+                validated_data = None
+
+            # Extract model
+            model = data.get("model", api_params.get("model", "unknown"))
+
+            # Extract citations from API response (not from JSON structure)
+            api_citations = data.get("citations", [])
+
+            # Also extract citations from JSON structure if available
+            json_citations = []
+            if validated_data and hasattr(validated_data, 'sources'):
+                json_citations = [s.url for s in validated_data.sources]
+
+            # Merge citations (prefer API citations, add JSON citations)
+            all_citations = api_citations + [c for c in json_citations if c not in api_citations]
+
+            # Extract token usage
+            usage = data.get("usage", {})
+            tokens_used = usage.get("total_tokens")
+
+            # Extract related questions if available
+            related_questions = data.get("related_questions")
+
+            # Verify citations presence
+            has_citations = len(all_citations) > 0
+            if self.verify_citations and not has_citations:
+                logger.warning("Response has no citations - may be unreliable")
+
+            # Check if response is complete
+            finish_reason = data["choices"][0].get("finish_reason")
+            is_complete = finish_reason == "stop"
+
+            if not is_complete:
+                logger.warning(f"Response incomplete: finish_reason={finish_reason}")
+
+            # Format content for PerplexityResponse
+            if validated_data:
+                # Use the answer field from validated data
+                if hasattr(validated_data, 'answer'):
+                    content = validated_data.answer
+                elif hasattr(validated_data, 'summary'):
+                    content = validated_data.summary
+                elif hasattr(validated_data, 'fact'):
+                    content = validated_data.fact
+                else:
+                    content = json.dumps(json_content, indent=2)
+            else:
+                content = json.dumps(json_content, indent=2)
+
+            response = PerplexityResponse(
+                content=content,
+                citations=all_citations,
+                model=model,
+                tokens_used=tokens_used,
+                has_citations=has_citations,
+                is_complete=is_complete,
+                related_questions=related_questions,
+            )
+
+            logger.info(
+                f"JSON schema response parsed: {len(content)} chars, "
+                f"{len(all_citations)} citations, {tokens_used} tokens"
+            )
+
+            return response
+
+        except (KeyError, IndexError, TypeError) as e:
+            logger.error(f"Failed to parse JSON schema response: {e}", exc_info=True)
+            return None
 
     def _parse_response(
         self,

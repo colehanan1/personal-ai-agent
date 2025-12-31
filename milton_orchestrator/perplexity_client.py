@@ -155,15 +155,16 @@ class PerplexityClient:
         target_repo: str
     ) -> Optional[str]:
         """
-        Research using structured prompting system with repo context.
+        Research using structured prompting system with repo context and JSON schemas.
 
-        Features:
-        - Token-optimized system messages
-        - Repository context injection
+        Features (2025 Enhanced):
+        - Token-optimized system messages with chain-of-thought
+        - JSON schema structured outputs for consistent parsing
+        - Repository context injection in every call
         - Search parameter optimization
-        - Citation verification
+        - Citation verification (citations are FREE in 2025)
         """
-        logger.info("Using structured prompting for research")
+        logger.info("Using structured prompting with JSON schema for research")
 
         try:
             # Initialize context loader for this repo
@@ -171,7 +172,7 @@ class PerplexityClient:
             if not self.context_loader or self.context_loader.repo_path != repo_path:
                 self.context_loader = RepositoryContextLoader(repo_path)
 
-            # Load repository context
+            # Load repository context (ALWAYS include context)
             repo_context = self.context_loader.get_context_summary()
             logger.info(f"Repository context: {repo_context}")
 
@@ -183,8 +184,23 @@ class PerplexityClient:
                 mode=SearchMode.PRO,
             )
 
-            # Execute with enhanced client
-            response = self.enhanced_client.execute_structured_prompt(structured_prompt)
+            # Import the SpecificationResponse schema for structured output
+            try:
+                from perplexity_integration.response_schemas import SpecificationResponse
+                response_schema = SpecificationResponse
+                use_json_schema = True
+                logger.info("JSON schema enabled: SpecificationResponse")
+            except ImportError:
+                logger.warning("Could not import response schemas, using legacy mode")
+                response_schema = None
+                use_json_schema = False
+
+            # Execute with enhanced client using JSON schema
+            response = self.enhanced_client.execute_structured_prompt(
+                structured_prompt,
+                response_schema=response_schema,
+                use_json_schema=use_json_schema,
+            )
 
             if not response:
                 logger.warning("Structured prompting failed, falling back to legacy")
@@ -196,10 +212,12 @@ class PerplexityClient:
             if not validation["is_reliable"]:
                 logger.warning(f"Response quality issues: {validation['issues']}")
 
-            # Log citation info
+            # Log citation info (citations are FREE in 2025, so expect many)
             if response.has_citations:
-                logger.info(f"Response has {len(response.citations)} citations")
+                logger.info(f"Response has {len(response.citations)} citations (citations FREE in 2025)")
                 logger.debug(f"Citations: {response.citations}")
+            else:
+                logger.warning("No citations found - response may be unreliable")
 
             # Log token usage
             if response.tokens_used:
