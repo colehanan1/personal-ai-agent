@@ -78,6 +78,12 @@ class FRONTIER:
     ) -> str:
         """Call vLLM API for inference."""
         url = f"{self.model_url}/v1/chat/completions"
+        api_key = (
+            os.getenv("LLM_API_KEY")
+            or os.getenv("VLLM_API_KEY")
+            or os.getenv("OLLAMA_API_KEY")
+        )
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
         messages = []
 
@@ -94,7 +100,7 @@ class FRONTIER:
         }
 
         try:
-            response = requests.post(url, json=payload, timeout=120)
+            response = requests.post(url, json=payload, timeout=120, headers=headers)
             response.raise_for_status()
             data = response.json()
             return data["choices"][0]["message"]["content"]

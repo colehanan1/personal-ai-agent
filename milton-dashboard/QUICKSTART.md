@@ -53,7 +53,7 @@ python scripts/start_vllm.py &
 # Start Weaviate
 docker compose up -d
 
-# Start backend API server (you'll need to implement this)
+# Start backend API server
 python scripts/start_api_server.py
 ```
 

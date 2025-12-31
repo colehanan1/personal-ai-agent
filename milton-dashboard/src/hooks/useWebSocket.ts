@@ -28,6 +28,12 @@ export function useWebSocket(
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const manualCloseRef = useRef(false);
+  const urlRef = useRef(url);
+  const onMessageRef = useRef(onMessage);
+  const onErrorRef = useRef(onError);
+  const onCloseRef = useRef(onClose);
+  const onOpenRef = useRef(onOpen);
 
   // Maximum reconnect delay (30 seconds)
   const MAX_RECONNECT_DELAY = 30000;
@@ -49,6 +55,7 @@ export function useWebSocket(
    * Close WebSocket connection
    */
   const close = useCallback(() => {
+    manualCloseRef.current = true;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -66,12 +73,22 @@ export function useWebSocket(
    * Connect to WebSocket
    */
   const connect = useCallback(() => {
+    // Don't connect if URL is empty
+    if (!url) {
+      return;
+    }
+
     // Don't create duplicate connections
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    if (
+      wsRef.current &&
+      wsRef.current.readyState !== WebSocket.CLOSED
+    ) {
       return;
     }
 
     try {
+      manualCloseRef.current = false;
+      const connectionUrl = url;
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
@@ -79,32 +96,45 @@ export function useWebSocket(
         setIsConnected(true);
         setError(null);
         reconnectAttemptsRef.current = 0;
-        onOpen?.();
+        onOpenRef.current?.();
       };
 
       ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data) as StreamMessage;
-          onMessage(message);
+          onMessageRef.current(message);
         } catch (err) {
           const parseError = new Error(
             `Failed to parse WebSocket message: ${String(err)}`
           );
           setError(parseError);
-          onError?.(parseError);
+          onErrorRef.current?.(parseError);
         }
       };
 
       ws.onerror = () => {
+        if (manualCloseRef.current || wsRef.current !== ws) {
+          return;
+        }
         const wsError = new Error("WebSocket connection error");
         setError(wsError);
-        onError?.(wsError);
+        onErrorRef.current?.(wsError);
       };
 
       ws.onclose = (event) => {
+        const wasManualClose = manualCloseRef.current;
+        manualCloseRef.current = false;
         setIsConnected(false);
         wsRef.current = null;
-        onClose?.();
+        onCloseRef.current?.();
+
+        if (wasManualClose) {
+          return;
+        }
+
+        if (!urlRef.current || urlRef.current !== connectionUrl) {
+          return;
+        }
 
         // Only reconnect if connection was interrupted (not normal closure)
         // Normal closure (code 1000) means stream completed successfully
@@ -122,9 +152,29 @@ export function useWebSocket(
         `Failed to create WebSocket: ${String(err)}`
       );
       setError(connectError);
-      onError?.(connectError);
+      onErrorRef.current?.(connectError);
     }
-  }, [url, onMessage, onError, onClose, onOpen, getReconnectDelay]);
+  }, [url, getReconnectDelay]);
+
+  useEffect(() => {
+    urlRef.current = url;
+  }, [url]);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
 
   /**
    * Connect on mount, cleanup on unmount
