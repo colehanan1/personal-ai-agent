@@ -43,8 +43,8 @@ cd ~/milton
 ```
 
 This will:
-- Create a Python virtual environment
-- Install all dependencies
+- Use the existing conda environment `milton`
+- Install all dependencies via pip
 - Install the `milton-orchestrator` command
 
 ### 3. Configure Environment Variables
@@ -73,8 +73,8 @@ This creates a systemd user service that runs the orchestrator automatically.
 ### Manual Run
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
+# Activate conda environment
+conda activate milton
 
 # Run orchestrator
 milton-orchestrator
@@ -185,8 +185,8 @@ This will:
 Run the test suite:
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
+# Activate conda environment
+conda activate milton
 
 # Run all tests
 pytest

@@ -8,11 +8,14 @@ echo ""
 
 # Detect installation directory
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_DIR="$INSTALL_DIR/venv"
 
-# Check that venv exists
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Error: Virtual environment not found at $VENV_DIR"
+# Find conda base path
+CONDA_BASE=$(conda info --base 2>/dev/null || echo "$HOME/miniconda3")
+CONDA_ENV_PATH="$CONDA_BASE/envs/milton"
+
+# Check that conda milton env exists
+if [ ! -d "$CONDA_ENV_PATH" ]; then
+    echo "Error: Conda environment 'milton' not found at $CONDA_ENV_PATH"
     echo "Please run install.sh first"
     exit 1
 fi
@@ -48,7 +51,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$INSTALL_DIR/.env
-ExecStart=$VENV_DIR/bin/milton-orchestrator
+ExecStart=$CONDA_ENV_PATH/bin/milton-orchestrator
 Restart=always
 RestartSec=10
 StandardOutput=journal

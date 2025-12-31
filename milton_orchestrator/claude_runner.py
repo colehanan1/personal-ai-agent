@@ -181,6 +181,22 @@ class ClaudeRunner:
             if not capabilities["supports_prompt_flag"]:
                 stdin_input = prompt
 
+            # Prepare environment variables for Claude Code
+            import os
+            env = os.environ.copy()
+
+            # Pass through Claude Code auto-approval settings from .env
+            if os.getenv("CLAUDE_CODE_AUTO_APPROVE"):
+                env["CLAUDE_CODE_AUTO_APPROVE"] = os.getenv("CLAUDE_CODE_AUTO_APPROVE")
+            if os.getenv("CLAUDE_CODE_TRUST_MODE"):
+                env["CLAUDE_CODE_TRUST_MODE"] = os.getenv("CLAUDE_CODE_TRUST_MODE")
+            if os.getenv("CLAUDE_CODE_ULTRATHINK"):
+                env["CLAUDE_CODE_ULTRATHINK"] = os.getenv("CLAUDE_CODE_ULTRATHINK")
+
+            logger.info(f"Claude Code environment: AUTO_APPROVE={env.get('CLAUDE_CODE_AUTO_APPROVE')}, "
+                       f"TRUST_MODE={env.get('CLAUDE_CODE_TRUST_MODE')}, "
+                       f"ULTRATHINK={env.get('CLAUDE_CODE_ULTRATHINK')}")
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -188,6 +204,7 @@ class ClaudeRunner:
                 timeout=timeout,
                 cwd=str(self.target_repo) if self.target_repo else None,
                 input=stdin_input,
+                env=env,
             )
 
             duration = time.time() - start_time

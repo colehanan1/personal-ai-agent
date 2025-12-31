@@ -10,35 +10,29 @@ echo ""
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 echo "Installation directory: $INSTALL_DIR"
 
-# Check Python version
-PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-echo "Python version: $PYTHON_VERSION"
-
-if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
-    echo "Error: Python 3.11 or higher is required"
+# Check if conda is available
+if ! command -v conda &> /dev/null; then
+    echo "Error: conda not found. Please install miniconda/anaconda first."
     exit 1
 fi
 
-# Create virtual environment
-VENV_DIR="$INSTALL_DIR/venv"
-if [ -d "$VENV_DIR" ]; then
-    echo "Virtual environment already exists at $VENV_DIR"
-    read -p "Remove and recreate? [y/N] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        rm -rf "$VENV_DIR"
-    else
-        echo "Using existing virtual environment"
-    fi
+# Check if milton conda env exists
+if ! conda env list | grep -q "^milton "; then
+    echo "Error: conda environment 'milton' not found."
+    echo "Please create it first with:"
+    echo "  conda create -n milton python=3.12"
+    exit 1
 fi
 
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
-fi
+echo "Using conda environment: milton"
 
-# Activate virtual environment
-source "$VENV_DIR/bin/activate"
+# Activate conda environment
+eval "$(conda shell.bash hook)"
+conda activate milton
+
+# Check Python version
+PYTHON_VERSION=$(python --version 2>&1 | awk '{print $2}')
+echo "Python version: $PYTHON_VERSION"
 
 # Upgrade pip
 echo "Upgrading pip..."
@@ -62,10 +56,10 @@ echo "2. Install systemd user service (optional):"
 echo "   $INSTALL_DIR/scripts/install-service.sh"
 echo ""
 echo "3. Test the installation:"
-echo "   source $VENV_DIR/bin/activate"
+echo "   conda activate milton"
 echo "   milton-orchestrator --help"
 echo ""
 echo "4. Run tests:"
-echo "   source $VENV_DIR/bin/activate"
+echo "   conda activate milton"
 echo "   pytest"
 echo ""
