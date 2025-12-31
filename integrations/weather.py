@@ -12,7 +12,7 @@ class WeatherAPI:
         self.base_url = "https://api.openweathermap.org/data/2.5/weather"
 
     def current_weather(self):
-        """Return dict with temp, condition, high, low, humidity."""
+        """Return dict with temp, condition, high, low, humidity, location."""
         if not self.api_key:
             raise RuntimeError("WEATHER_API_KEY not set in environment")
 
@@ -31,5 +31,6 @@ class WeatherAPI:
             "humidity": data["main"]["humidity"],
             "high": data["main"]["temp_max"],
             "low": data["main"]["temp_min"],
+            "location": self.location,  # Added for tests
         }
 
