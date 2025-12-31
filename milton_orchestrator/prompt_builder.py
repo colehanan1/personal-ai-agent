@@ -187,6 +187,62 @@ class ClaudePromptBuilder:
 
         return "\n".join(sections)
 
+    def build_agent_prompt(
+        self,
+        user_request: str,
+        research_notes: Optional[str] = None,
+    ) -> str:
+        """
+        Build a tool-agnostic prompt for coding agents.
+
+        Args:
+            user_request: The original user request
+            research_notes: Optional research/specification from Perplexity
+
+        Returns:
+            A structured, tool-agnostic prompt
+        """
+        logger.info("Building agent-agnostic job prompt")
+
+        sections = []
+
+        sections.append("# Code Agent Instructions")
+        sections.append("")
+
+        sections.append("## Context")
+        sections.append(f"Repository: {self.target_repo}")
+        sections.append(f"Request: {user_request}")
+        sections.append("")
+
+        if research_notes:
+            sections.append("## Research & Specification")
+            sections.append(research_notes)
+            sections.append("")
+
+        sections.append("## Execution Requirements")
+        sections.append("- Read repository context before making changes")
+        sections.append("- Propose a clear, step-by-step plan first")
+        sections.append("- After the plan, implement the changes")
+        sections.append("- Run unit tests with pytest and ensure they pass")
+        sections.append("- Summarize changes: files changed, key decisions, and how to run tests")
+        sections.append("")
+
+        sections.append("## Security")
+        sections.append("- Never commit secrets or credentials")
+        sections.append("- Use environment variables for configuration")
+        sections.append("- Validate inputs and handle edge cases")
+        sections.append("")
+
+        sections.append("## Notes")
+        sections.append("- Work within the repository boundaries")
+        sections.append("- If you encounter blockers, document them clearly")
+        sections.append("")
+
+        prompt = "\n".join(sections)
+        logger.debug(f"Built agent prompt with {len(prompt)} characters")
+
+        return prompt
+
 
 def extract_command_type(message: str) -> tuple[str, str]:
     """

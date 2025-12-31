@@ -1,6 +1,7 @@
 """Configuration management for Milton Orchestrator"""
 
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,15 @@ class Config:
     claude_bin: str
     target_repo: Path
 
+    # Codex CLI settings
+    codex_bin: str
+    codex_model: str
+    codex_timeout: int
+    codex_extra_args: list[str]
+    enable_codex_fallback: bool
+    codex_fallback_on_any_failure: bool
+    claude_fallback_on_limit: bool
+
     # Logging and state
     log_dir: Path
     state_dir: Path
@@ -37,6 +47,33 @@ class Config:
     @classmethod
     def from_env(cls) -> "Config":
         """Load configuration from environment variables"""
+
+        def parse_bool(value: Optional[str], default: bool) -> bool:
+            if value is None:
+                return default
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on"}:
+                return True
+            if normalized in {"0", "false", "no", "off"}:
+                return False
+            return default
+
+        def parse_fallback_mode(value: Optional[str]) -> tuple[bool, bool]:
+            if value is None:
+                return True, False
+            normalized = value.strip().lower()
+            if normalized in {"always", "any", "all"}:
+                return True, True
+            if normalized in {"1", "true", "yes", "on"}:
+                return True, False
+            if normalized in {"0", "false", "no", "off"}:
+                return False, False
+            return True, False
+
+        def parse_extra_args(value: Optional[str]) -> list[str]:
+            if not value:
+                return []
+            return shlex.split(value)
 
         # ntfy settings
         ntfy_base_url = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
@@ -64,6 +101,22 @@ class Config:
         if not target_repo_path.is_dir():
             raise ValueError(f"TARGET_REPO is not a directory: {target_repo_path}")
 
+        # Processing settings
+        request_timeout = int(os.getenv("REQUEST_TIMEOUT", "600"))
+        ntfy_reconnect_backoff_max = int(os.getenv("NTFY_RECONNECT_BACKOFF_MAX", "300"))
+
+        # Codex CLI settings
+        codex_bin = os.getenv("CODEX_BIN", "codex")
+        codex_model = os.getenv("CODEX_MODEL", "gpt-5.2-codex")
+        codex_timeout = int(os.getenv("CODEX_TIMEOUT", str(request_timeout)))
+        codex_extra_args = parse_extra_args(os.getenv("CODEX_EXTRA_ARGS", ""))
+        enable_codex_fallback, codex_fallback_on_any_failure = parse_fallback_mode(
+            os.getenv("ENABLE_CODEX_FALLBACK")
+        )
+        claude_fallback_on_limit = parse_bool(
+            os.getenv("CLAUDE_FALLBACK_ON_LIMIT"), True
+        )
+
         # Logging and state
         home = Path.home()
         log_dir = Path(os.getenv("LOG_DIR", home / ".local/state/milton_orchestrator/logs"))
@@ -73,10 +126,6 @@ class Config:
         state_dir.mkdir(parents=True, exist_ok=True)
 
         max_output_size = int(os.getenv("MAX_OUTPUT_SIZE", "4000"))
-
-        # Processing settings
-        request_timeout = int(os.getenv("REQUEST_TIMEOUT", "600"))
-        ntfy_reconnect_backoff_max = int(os.getenv("NTFY_RECONNECT_BACKOFF_MAX", "300"))
 
         return cls(
             ntfy_base_url=ntfy_base_url,
@@ -88,6 +137,13 @@ class Config:
             perplexity_max_retries=perplexity_max_retries,
             claude_bin=claude_bin,
             target_repo=target_repo_path,
+            codex_bin=codex_bin,
+            codex_model=codex_model,
+            codex_timeout=codex_timeout,
+            codex_extra_args=codex_extra_args,
+            enable_codex_fallback=enable_codex_fallback,
+            codex_fallback_on_any_failure=codex_fallback_on_any_failure,
+            claude_fallback_on_limit=claude_fallback_on_limit,
             log_dir=log_dir,
             state_dir=state_dir,
             max_output_size=max_output_size,

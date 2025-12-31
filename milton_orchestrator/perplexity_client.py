@@ -3,8 +3,23 @@
 import logging
 import time
 from typing import Optional, Dict, Any
+from pathlib import Path
 
 import requests
+
+# Import new structured prompting system
+try:
+    from perplexity_integration import (
+        PerplexityPromptBuilder,
+        PerplexityAPIClient as EnhancedAPIClient,
+        RepositoryContextLoader,
+        SearchMode,
+        RecencyFilter,
+    )
+    STRUCTURED_PROMPTING_AVAILABLE = True
+except ImportError:
+    STRUCTURED_PROMPTING_AVAILABLE = False
+    logger.warning("Structured prompting system not available - using legacy mode")
 
 logger = logging.getLogger(__name__)
 
@@ -20,16 +35,39 @@ class PerplexityClient:
         model: str = "sonar-pro",
         timeout: int = 60,
         max_retries: int = 3,
+        use_structured_prompting: bool = True,
     ):
         self.api_key = api_key
         self.model = model
         self.timeout = timeout
         self.max_retries = max_retries
+        self.use_structured_prompting = use_structured_prompting and STRUCTURED_PROMPTING_AVAILABLE
+
+        # Initialize legacy session
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         })
+
+        # Initialize structured prompting components if available
+        if self.use_structured_prompting:
+            self.enhanced_client = EnhancedAPIClient(
+                api_key=api_key,
+                timeout=timeout,
+                max_retries=max_retries,
+                verify_citations=True,
+            )
+            self.prompt_builder = PerplexityPromptBuilder(
+                default_mode=SearchMode.PRO,
+            )
+            self.context_loader = None  # Will be initialized per repo
+            logger.info("Structured prompting system enabled")
+        else:
+            self.enhanced_client = None
+            self.prompt_builder = None
+            self.context_loader = None
+            logger.info("Using legacy prompting mode")
 
     def chat(
         self,
@@ -105,6 +143,79 @@ class PerplexityClient:
         Returns:
             Optimized specification as a string, or None on failure
         """
+        # Use structured prompting if available
+        if self.use_structured_prompting:
+            return self._research_with_structured_prompting(user_request, target_repo)
+
+        # Fall back to legacy mode
+        return self._research_legacy(user_request, target_repo)
+
+    def _research_with_structured_prompting(
+        self,
+        user_request: str,
+        target_repo: str
+    ) -> Optional[str]:
+        """
+        Research using structured prompting system with repo context.
+
+        Features:
+        - Token-optimized system messages
+        - Repository context injection
+        - Search parameter optimization
+        - Citation verification
+        """
+        logger.info("Using structured prompting for research")
+
+        try:
+            # Initialize context loader for this repo
+            repo_path = Path(target_repo)
+            if not self.context_loader or self.context_loader.repo_path != repo_path:
+                self.context_loader = RepositoryContextLoader(repo_path)
+
+            # Load repository context
+            repo_context = self.context_loader.get_context_summary()
+            logger.info(f"Repository context: {repo_context}")
+
+            # Build structured prompt with context
+            structured_prompt = self.prompt_builder.build_specification_prompt(
+                user_request=user_request,
+                target_repo=target_repo,
+                repo_context=repo_context,
+                mode=SearchMode.PRO,
+            )
+
+            # Execute with enhanced client
+            response = self.enhanced_client.execute_structured_prompt(structured_prompt)
+
+            if not response:
+                logger.warning("Structured prompting failed, falling back to legacy")
+                return self._research_legacy(user_request, target_repo)
+
+            # Validate response quality
+            validation = self.enhanced_client.validate_response_quality(response)
+
+            if not validation["is_reliable"]:
+                logger.warning(f"Response quality issues: {validation['issues']}")
+
+            # Log citation info
+            if response.has_citations:
+                logger.info(f"Response has {len(response.citations)} citations")
+                logger.debug(f"Citations: {response.citations}")
+
+            # Log token usage
+            if response.tokens_used:
+                logger.info(f"Tokens used: {response.tokens_used}")
+
+            return response.content
+
+        except Exception as e:
+            logger.error(f"Error in structured prompting: {e}", exc_info=True)
+            return self._research_legacy(user_request, target_repo)
+
+    def _research_legacy(self, user_request: str, target_repo: str) -> Optional[str]:
+        """Legacy research method (backward compatible)"""
+        logger.info("Using legacy prompting mode")
+
         system_prompt = """You are an expert software architect and prompt engineer.
 Your task is to analyze coding requests and produce detailed, actionable specifications
 optimized for an AI coding assistant (Claude Code).
@@ -138,6 +249,8 @@ Structure your response as a clear, actionable specification that a coding AI ca
     def close(self):
         """Close the session"""
         self.session.close()
+        if self.enhanced_client:
+            self.enhanced_client.close()
 
 
 def fallback_prompt_optimizer(user_request: str, target_repo: str) -> str:

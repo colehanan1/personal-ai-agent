@@ -5,7 +5,7 @@
 A complete voice-to-code system that:
 - Receives text commands from your iPhone via ntfy
 - Uses Perplexity AI to research and optimize prompts  
-- Executes Claude Code to implement changes
+- Executes Claude Code to implement changes (falls back to Codex CLI when Claude is unavailable or rate-limited)
 - Sends status updates back to your iPhone
 
 ## Installation Steps
@@ -33,6 +33,23 @@ nano .env
 ```bash
 PERPLEXITY_API_KEY=your_key_here
 TARGET_REPO=/home/cole-hanan/your-project-directory
+```
+
+**Optional but recommended for fallback:**
+```bash
+CODEX_BIN=codex
+CODEX_MODEL=gpt-5.2-codex
+ENABLE_CODEX_FALLBACK=true
+```
+
+If you plan to use Codex fallback, ensure your Codex CLI authentication is set up
+(for example `OPENAI_API_KEY` if required by your Codex install).
+
+### 2b. Install Codex CLI (Optional but Recommended)
+
+Install Codex CLI using the method for your environment, then verify:
+```bash
+codex --help
 ```
 
 ### 3. Test the Installation
@@ -84,7 +101,7 @@ CODE: Add a login feature with email and password authentication
 The orchestrator will:
 1. Send ACK to your phone
 2. Research with Perplexity
-3. Execute Claude Code  
+3. Execute Claude Code (fallbacks to Codex CLI if Claude is unavailable/limited)  
 4. Send results back to your phone
 
 #### Send a Research Request
@@ -139,6 +156,8 @@ Full Claude Code outputs are saved to:
 ls -lah ~/.local/state/milton_orchestrator/outputs/
 ```
 
+Codex outputs (plan + execute) are stored in the same directory with `codex_*.txt` filenames.
+
 ### Service Status
 
 ```bash
@@ -192,6 +211,23 @@ which claude
 CLAUDE_BIN=/path/to/claude
 ```
 
+### Codex fallback not working
+
+1. Ensure Codex CLI is installed and on PATH:
+   ```bash
+   which codex
+   codex --help
+   ```
+2. Verify fallback is enabled in `.env`:
+   ```bash
+   ENABLE_CODEX_FALLBACK=true
+   CLAUDE_FALLBACK_ON_LIMIT=true
+   ```
+3. Send a request while Claude is unavailable/limited and check logs:
+   ```bash
+   tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
+   ```
+
 ## Next Steps
 
 1. **Test with a small request** - Send a simple CODE request from your phone
@@ -210,7 +246,8 @@ milton/
 │   ├── ntfy_client.py          # ntfy integration
 │   ├── perplexity_client.py    # Perplexity API
 │   ├── prompt_builder.py       # Prompt construction
-│   └── claude_runner.py        # Claude Code wrapper
+│   ├── claude_runner.py        # Claude Code wrapper
+│   └── codex_runner.py         # Codex CLI wrapper
 ├── tests/                      # Unit tests (49 tests)
 ├── scripts/
 │   ├── install.sh              # Installation script

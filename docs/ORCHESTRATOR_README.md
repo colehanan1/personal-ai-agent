@@ -1,12 +1,13 @@
 # Milton Orchestrator
 
-A production-grade voice-to-code orchestrator that receives text commands from your iPhone via ntfy, uses Perplexity AI for research and prompt optimization, and executes code changes using Claude Code CLI.
+A production-grade voice-to-code orchestrator that receives text commands from your iPhone via ntfy, uses Perplexity AI for research and prompt optimization, and executes code changes using Claude Code CLI with a Codex CLI fallback for rate limits or outages.
 
 ## Features
 
 - **iPhone Integration**: Receive coding requests from your iPhone via ntfy
 - **AI-Powered Research**: Uses Perplexity AI to research and optimize prompts
 - **Automated Code Execution**: Runs Claude Code CLI to implement changes
+- **Codex Fallback**: Automatically falls back to Codex CLI on Claude usage limits or missing binary (plan-first then execute)
 - **Real-time Status Updates**: Sends progress updates back to your iPhone
 - **Robust Error Handling**: Retries, timeouts, and graceful fallbacks
 - **Production-Ready**: Systemd service, logging, and crash-safe operation
@@ -16,6 +17,7 @@ A production-grade voice-to-code orchestrator that receives text commands from y
 
 ```
 iPhone (ntfy) → Orchestrator → Perplexity AI → Claude Code → Target Repo
+                                      ↘ Codex CLI (fallback) ↗
                      ↓
               Status Updates (ntfy) → iPhone
 ```
@@ -25,6 +27,7 @@ iPhone (ntfy) → Orchestrator → Perplexity AI → Claude Code → Target Repo
 - Python 3.11 or higher
 - Ubuntu or compatible Linux distribution
 - Claude Code CLI installed
+- Codex CLI installed (recommended for fallback)
 - Perplexity API key
 - ntfy.sh account (or self-hosted ntfy server)
 
@@ -59,6 +62,17 @@ nano .env
 - `TARGET_REPO`: Path to the repository where code changes will be made
 
 **Optional variables:** See `.env.example` for all options.
+
+### 3b. Install Codex CLI (Optional but Recommended)
+
+If you want automatic fallback from Claude to Codex:
+
+1. Install Codex CLI using your preferred method.
+2. Verify it works:
+   ```bash
+   codex --help
+   ```
+3. Ensure authentication is configured (for example `OPENAI_API_KEY` if required).
 
 ### 4. Install Systemd Service (Optional)
 
@@ -124,7 +138,7 @@ Implement unit tests for the authentication module using pytest
 This will:
 1. Research the request with Perplexity
 2. Build an optimized prompt
-3. Execute Claude Code in your target repo
+3. Execute Claude Code in your target repo (fallback to Codex if Claude is unavailable/limited)
 4. Send results back to your iPhone
 
 ### RESEARCH Request (No Code Changes)
@@ -172,6 +186,17 @@ This will:
 | `CLAUDE_BIN` | Path to Claude binary | `claude` |
 | `REQUEST_TIMEOUT` | Max execution time (seconds) | `600` |
 
+### Codex CLI Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CODEX_BIN` | Path to Codex binary | `codex` |
+| `CODEX_MODEL` | Codex model override (`default` to use CLI default) | `gpt-5.2-codex` |
+| `CODEX_TIMEOUT` | Max Codex execution time (seconds) | `REQUEST_TIMEOUT` |
+| `CODEX_EXTRA_ARGS` | Extra Codex CLI flags (quoted string) | *(empty)* |
+| `ENABLE_CODEX_FALLBACK` | Enable Codex fallback (`always` = any Claude failure) | `true` |
+| `CLAUDE_FALLBACK_ON_LIMIT` | Fallback only on usage/rate limits | `true` |
+
 ### Logging Configuration
 
 | Variable | Description | Default |
@@ -215,6 +240,7 @@ Full Claude Code outputs are saved to:
 ~/.local/state/milton_orchestrator/outputs/
 ```
 
+Codex outputs (plan + execute) are saved alongside Claude outputs with `codex_*` filenames.
 Each file is timestamped for easy reference.
 
 ## Troubleshooting
@@ -282,6 +308,26 @@ Each file is timestamped for easy reference.
 
 3. Check permissions on TARGET_REPO
 
+### Codex fallback not triggering
+
+1. Verify Codex CLI is installed:
+   ```bash
+   which codex
+   codex --help
+   ```
+
+2. Ensure fallback is enabled:
+   ```bash
+   ENABLE_CODEX_FALLBACK=true
+   CLAUDE_FALLBACK_ON_LIMIT=true
+   ```
+
+3. Check outputs and logs after a fallback:
+   ```bash
+   ls -lah ~/.local/state/milton_orchestrator/outputs/
+   tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
+   ```
+
 ## Security
 
 - **Never commit .env file**: It contains secrets
@@ -301,13 +347,15 @@ milton_orchestrator/
 ├── perplexity_client.py     # Perplexity API client
 ├── prompt_builder.py        # Claude prompt construction
 ├── claude_runner.py         # Claude Code subprocess wrapper
+├── codex_runner.py          # Codex CLI subprocess wrapper
 └── orchestrator.py          # Main orchestration logic
 
 tests/
 ├── test_prompt_builder.py   # Prompt building tests
 ├── test_perplexity_client.py # Perplexity client tests
 ├── test_claude_runner.py    # Claude runner tests
-└── test_ntfy_parsing.py     # ntfy parsing tests
+├── test_ntfy_parsing.py     # ntfy parsing tests
+└── test_orchestrator_fallback.py # Fallback logic tests
 
 scripts/
 ├── install.sh               # Installation script

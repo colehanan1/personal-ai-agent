@@ -1,6 +1,7 @@
 """Claude Code subprocess wrapper and capability detection"""
 
 import logging
+import re
 import shutil
 import subprocess
 import tempfile
@@ -9,6 +10,28 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def is_usage_limit_error(text: str) -> bool:
+    """Detect Claude usage/rate limit errors from output text."""
+    if not text:
+        return False
+
+    normalized = text.lower()
+    patterns = [
+        r"usage limit",
+        r"rate[- ]limit",
+        r"\bquota\b",
+        r"too many requests",
+        r"\b429\b",
+        r"http\s*429",
+        r"limit exceeded",
+        r"exceeded.*quota",
+        r"exceeded.*rate",
+        r"try again later",
+    ]
+
+    return any(re.search(pattern, normalized) for pattern in patterns)
 
 
 @dataclass
@@ -157,25 +180,25 @@ class ClaudeRunner:
         cmd = [self.claude_bin]
 
         # Add prompt
-        if capabilities["supports_prompt_flag"]:
+        if capabilities.get("supports_prompt_flag"):
             cmd.extend(["-p", prompt])
         else:
             # Write prompt to temp file and use stdin
             logger.warning("Claude doesn't support -p flag, using alternative method")
 
         # Add auto-approve flags to minimize interaction
-        if capabilities["supports_yes_flag"]:
+        if capabilities.get("supports_yes_flag"):
             cmd.append("-y")
-        elif capabilities["supports_auto_approve"]:
+        elif capabilities.get("supports_auto_approve"):
             cmd.append("--auto-approve")
 
         # Add skip permissions flag for fully automated execution
-        if capabilities["supports_skip_permissions"]:
+        if capabilities.get("supports_skip_permissions"):
             cmd.append("--dangerously-skip-permissions")
             logger.info("Using --dangerously-skip-permissions for automated execution")
 
         # Add print mode if available
-        if capabilities["supports_print_mode"]:
+        if capabilities.get("supports_print_mode"):
             cmd.append("--print")
 
         logger.info(f"Executing Claude Code: {' '.join(cmd[:3])}...")

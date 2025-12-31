@@ -34,6 +34,12 @@ Environment Variables:
   ANSWER_TOPIC           Topic for responses (default: milton-briefing-code)
   PERPLEXITY_MODEL       Perplexity model (default: sonar-pro)
   CLAUDE_BIN             Claude Code binary path (default: claude)
+  CODEX_BIN              Codex CLI binary path (default: codex)
+  CODEX_MODEL            Codex model override (default: gpt-5.2-codex)
+  CODEX_TIMEOUT          Codex timeout seconds (default: REQUEST_TIMEOUT)
+  ENABLE_CODEX_FALLBACK  Enable Claude-to-Codex fallback (default: true)
+  CLAUDE_FALLBACK_ON_LIMIT  Fallback only on usage/rate limits (default: true)
+  CODEX_EXTRA_ARGS       Extra Codex CLI flags (quoted string)
 
 Message Formats:
   CODE: <request>        Run full pipeline with Claude Code execution
@@ -85,6 +91,13 @@ Message Formats:
     logger.info(f"Ask Topic: {config.ask_topic}")
     logger.info(f"Answer Topic: {config.answer_topic}")
     logger.info(f"Claude Binary: {config.claude_bin}")
+    logger.info(f"Codex Binary: {config.codex_bin}")
+    logger.info(f"Codex Model: {config.codex_model}")
+    logger.info(
+        f"Codex Fallback: enabled={config.enable_codex_fallback}, "
+        f"any_failure={config.codex_fallback_on_any_failure}, "
+        f"on_limit={config.claude_fallback_on_limit}"
+    )
     logger.info(f"Dry Run: {args.dry_run}")
     logger.info("=" * 60)
 

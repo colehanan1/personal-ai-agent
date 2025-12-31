@@ -12,7 +12,8 @@ from .config import Config
 from .ntfy_client import NtfyClient, subscribe_with_reconnect
 from .perplexity_client import PerplexityClient, fallback_prompt_optimizer
 from .prompt_builder import ClaudePromptBuilder, extract_command_type
-from .claude_runner import ClaudeRunner
+from .claude_runner import ClaudeRunner, is_usage_limit_error
+from .codex_runner import CodexRunner
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,13 @@ class Orchestrator:
         self.claude_runner = ClaudeRunner(
             claude_bin=config.claude_bin,
             target_repo=config.target_repo,
+        )
+        self.codex_runner = CodexRunner(
+            codex_bin=config.codex_bin,
+            target_repo=config.target_repo,
+            model=config.codex_model,
+            extra_args=config.codex_extra_args,
+            state_dir=config.state_dir,
         )
 
         logger.info(f"Orchestrator initialized (dry_run={dry_run})")
@@ -116,17 +124,36 @@ class Orchestrator:
                 research_notes = fallback_prompt_optimizer(content, str(self.config.target_repo))
 
             self.publish_status(
-                f"[{request_id}] Research complete. Building Claude prompt...",
+                f"[{request_id}] Research complete. Building agent prompts...",
                 title="Research Complete",
             )
 
-            # Step 3: Build Claude prompt
+            # Step 3: Build prompts
+            agent_prompt = self.prompt_builder.build_agent_prompt(
+                user_request=content,
+                research_notes=research_notes,
+            )
             claude_prompt = self.prompt_builder.build_job_prompt(
                 user_request=content,
                 research_notes=research_notes,
             )
 
-            # Step 4: Execute Claude Code
+            # Step 4: Execute Claude Code (primary)
+            if not self.claude_runner.check_available():
+                if self.config.enable_codex_fallback:
+                    self._run_codex_fallback(
+                        request_id=request_id,
+                        agent_prompt=agent_prompt,
+                        reason="Claude unavailable/limited",
+                    )
+                    return
+
+                self.publish_status(
+                    f"❌ [{request_id}] Claude Code binary not found: {self.config.claude_bin}",
+                    title="Claude Unavailable",
+                )
+                return
+
             self.publish_status(
                 f"[{request_id}] Executing Claude Code...\nThis may take several minutes.",
                 title="Claude Executing",
@@ -144,22 +171,43 @@ class Orchestrator:
                 self.config.state_dir / "outputs",
             )
 
-            # Step 6: Publish results
-            status_emoji = "✅" if result.success else "❌"
-            summary = result.get_summary(self.config.max_output_size)
+            if result.success:
+                status_emoji = "✅"
+                summary = result.get_summary(self.config.max_output_size)
+                final_message = (
+                    f"{status_emoji} [{request_id}] Claude Code finished\n\n"
+                    f"{summary}\n\n"
+                    f"Full output: {output_file}"
+                )
+                self.publish_status(
+                    final_message,
+                    title=f"Success: {request_id}",
+                )
+                logger.info(f"Request {request_id} completed successfully")
+                return
 
+            # Claude failed
+            fallback_reason = self._codex_fallback_reason(result)
+            if fallback_reason:
+                self._run_codex_fallback(
+                    request_id=request_id,
+                    agent_prompt=agent_prompt,
+                    reason=fallback_reason,
+                    claude_output_file=output_file,
+                )
+                return
+
+            status_emoji = "❌"
+            summary = result.get_summary(self.config.max_output_size)
             final_message = (
-                f"{status_emoji} [{request_id}] Claude Code finished\n\n"
+                f"{status_emoji} [{request_id}] Claude Code failed\n\n"
                 f"{summary}\n\n"
                 f"Full output: {output_file}"
             )
-
             self.publish_status(
                 final_message,
-                title=f"{'Success' if result.success else 'Failed'}: {request_id}",
+                title=f"Failed: {request_id}",
             )
-
-            logger.info(f"Request {request_id} completed successfully")
 
         except Exception as e:
             logger.error(f"Error processing request {request_id}: {e}", exc_info=True)
@@ -167,6 +215,69 @@ class Orchestrator:
                 f"❌ [{request_id}] Error: {e}",
                 title="Processing Error",
             )
+
+    def _codex_fallback_reason(self, claude_result) -> Optional[str]:
+        if not self.config.enable_codex_fallback:
+            return None
+        if self.config.codex_fallback_on_any_failure:
+            return "Claude failed"
+        if not self.config.claude_fallback_on_limit:
+            return None
+        text = f"{claude_result.stdout}\n{claude_result.stderr}"
+        if is_usage_limit_error(text):
+            return "Claude unavailable/limited"
+        return None
+
+    def _run_codex_fallback(
+        self,
+        request_id: str,
+        agent_prompt: str,
+        reason: str,
+        claude_output_file: Optional[Path] = None,
+    ):
+        self.publish_status(
+            f"[{request_id}] {reason} → falling back to Codex",
+            title="Codex Fallback",
+        )
+
+        if not self.codex_runner.check_available():
+            self.publish_status(
+                f"❌ [{request_id}] Codex CLI binary not found: {self.config.codex_bin}",
+                title="Codex Unavailable",
+            )
+            return
+
+        result = self.codex_runner.run(
+            prompt=agent_prompt,
+            timeout=self.config.codex_timeout,
+            dry_run=self.dry_run,
+        )
+
+        plan_output = self.codex_runner.last_plan_output_file
+        execute_output = self.codex_runner.last_execute_output_file
+
+        status_emoji = "✅" if result.success else "❌"
+        summary = result.get_summary(self.config.max_output_size)
+
+        lines = [
+            f"{status_emoji} [{request_id}] Codex finished",
+            "",
+            summary,
+        ]
+
+        if claude_output_file:
+            lines.extend(["", f"Claude output: {claude_output_file}"])
+        if plan_output:
+            lines.extend(["", f"Plan output: {plan_output}"])
+        if execute_output:
+            lines.extend(["", f"Execute output: {execute_output}"])
+        elif plan_output and not execute_output:
+            lines.extend(["", "Execute output: (not run)"])
+
+        self.publish_status(
+            "\n".join(lines),
+            title=f"{'Success' if result.success else 'Failed'}: {request_id}",
+        )
 
     def process_research_request(self, request_id: str, content: str):
         """Process a RESEARCH request (no Claude execution)"""
