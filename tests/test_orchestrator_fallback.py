@@ -17,6 +17,8 @@ def config(tmp_path: Path) -> Config:
         ntfy_base_url="https://ntfy.sh",
         ask_topic="ask-topic",
         answer_topic="answer-topic",
+        claude_topic="",
+        codex_topic="",
         perplexity_api_key="test-key",
         perplexity_model="sonar-pro",
         perplexity_timeout=30,
@@ -30,6 +32,14 @@ def config(tmp_path: Path) -> Config:
         enable_codex_fallback=True,
         codex_fallback_on_any_failure=False,
         claude_fallback_on_limit=True,
+        enable_prefix_routing=True,
+        enable_claude_pipeline=True,
+        enable_codex_pipeline=True,
+        enable_research_mode=True,
+        enable_reminders=False,
+        perplexity_in_claude_mode=False,
+        perplexity_in_codex_mode=False,
+        perplexity_in_research_mode=False,
         log_dir=tmp_path / "logs",
         state_dir=tmp_path / "state",
         max_output_size=4000,
@@ -72,7 +82,7 @@ def test_fallback_on_usage_limit(config, tmp_path):
     orchestrator.codex_runner.last_plan_output_file = tmp_path / "plan.txt"
     orchestrator.codex_runner.last_execute_output_file = tmp_path / "exec.txt"
 
-    orchestrator.process_code_request("req-usage", "Do the thing")
+    orchestrator.process_claude_code_request("req-usage", "Do the thing")
 
     orchestrator.claude_runner.run.assert_called_once()
     orchestrator.codex_runner.run.assert_called_once()
@@ -96,7 +106,7 @@ def test_fallback_on_missing_claude(config, tmp_path):
     orchestrator.codex_runner.last_plan_output_file = tmp_path / "plan.txt"
     orchestrator.codex_runner.last_execute_output_file = tmp_path / "exec.txt"
 
-    orchestrator.process_code_request("req-missing", "Do the other thing")
+    orchestrator.process_claude_code_request("req-missing", "Do the other thing")
 
     orchestrator.claude_runner.run.assert_not_called()
     orchestrator.codex_runner.run.assert_called_once()
@@ -119,6 +129,6 @@ def test_no_fallback_on_non_limit_error(config, tmp_path):
     orchestrator.codex_runner = MagicMock()
     orchestrator.codex_runner.check_available.return_value = True
 
-    orchestrator.process_code_request("req-fail", "Fix the tests")
+    orchestrator.process_claude_code_request("req-fail", "Fix the tests")
 
     orchestrator.codex_runner.run.assert_not_called()

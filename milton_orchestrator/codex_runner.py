@@ -4,6 +4,7 @@ import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -77,6 +78,9 @@ class CodexRunner:
         self._yes_flag: Optional[str] = None
         self._model_flag: Optional[str] = None
         self._non_interactive_flag: Optional[str] = None
+        self._sandbox_flag: Optional[str] = None
+        self._bypass_sandbox_flag: Optional[str] = None
+        self._exec_supported: bool = False
         self._read_only_flag: Optional[str] = None
         self._auto_approve_flag: Optional[str] = None
         self._skip_permissions_flag: Optional[str] = None
@@ -109,72 +113,86 @@ class CodexRunner:
                 timeout=10,
             )
 
-            help_text = (result.stdout + result.stderr).lower()
+            help_text = result.stdout + result.stderr
+            help_lower = help_text.lower()
 
             self._prompt_flag = None
-            if "--prompt" in help_text:
+            if "--prompt" in help_lower:
                 self._prompt_flag = "--prompt"
-            elif "--message" in help_text:
+            elif "--message" in help_lower:
                 self._prompt_flag = "--message"
-            elif "-p" in help_text:
-                self._prompt_flag = "-p"
 
             self._path_flag = None
-            if "--path" in help_text:
+            if "--path" in help_lower:
                 self._path_flag = "--path"
-            elif "--cwd" in help_text:
+            elif "--cwd" in help_lower:
                 self._path_flag = "--cwd"
-            elif "--repo" in help_text:
+            elif "--repo" in help_lower:
                 self._path_flag = "--repo"
+            elif "--cd" in help_lower:
+                self._path_flag = "--cd"
 
             self._yes_flag = None
-            if "-y" in help_text:
+            if "-y" in help_lower:
                 self._yes_flag = "-y"
-            elif "--yes" in help_text:
+            elif "--yes" in help_lower:
                 self._yes_flag = "--yes"
 
             self._model_flag = None
-            if "--model" in help_text:
+            if "--model" in help_lower:
                 self._model_flag = "--model"
-            elif "-m" in help_text:
+            elif "-m" in help_lower:
                 self._model_flag = "-m"
 
             self._non_interactive_flag = None
-            if "--non-interactive" in help_text:
+            if "--non-interactive" in help_lower:
                 self._non_interactive_flag = "--non-interactive"
-            elif "--noninteractive" in help_text:
+            elif "--noninteractive" in help_lower:
                 self._non_interactive_flag = "--noninteractive"
 
             self._read_only_flag = None
-            if "--read-only" in help_text:
+            if "--read-only" in help_lower:
                 self._read_only_flag = "--read-only"
-            elif "--readonly" in help_text:
+            elif "--readonly" in help_lower:
                 self._read_only_flag = "--readonly"
 
             self._auto_approve_flag = None
-            if "--auto-approve" in help_text:
+            if "--auto-approve" in help_lower:
                 self._auto_approve_flag = "--auto-approve"
-            elif "--auto-apply" in help_text:
+            elif "--auto-apply" in help_lower:
                 self._auto_approve_flag = "--auto-apply"
 
             self._skip_permissions_flag = None
-            if "--dangerously-skip-permissions" in help_text:
+            if "--dangerously-skip-permissions" in help_lower:
                 self._skip_permissions_flag = "--dangerously-skip-permissions"
-            elif "--skip-permissions" in help_text:
+            elif "--skip-permissions" in help_lower:
                 self._skip_permissions_flag = "--skip-permissions"
+
+            self._sandbox_flag = None
+            if "--sandbox" in help_lower:
+                self._sandbox_flag = "--sandbox"
+
+            self._bypass_sandbox_flag = None
+            if "--dangerously-bypass-approvals-and-sandbox" in help_lower:
+                self._bypass_sandbox_flag = "--dangerously-bypass-approvals-and-sandbox"
+
+            self._exec_supported = bool(re.search(r"^\s*exec\s", help_text, re.MULTILINE))
 
             capabilities = {
                 "supports_prompt_flag": self._prompt_flag is not None,
                 "supports_path_flag": self._path_flag is not None,
                 "supports_model_flag": self._model_flag is not None,
-                "supports_plan_flag": "--plan" in help_text,
+                "supports_plan_flag": "--plan" in help_lower,
                 "supports_read_only_flag": self._read_only_flag is not None,
-                "supports_dry_run_flag": "--dry-run" in help_text,
-                "supports_print_flag": "--print" in help_text,
+                "supports_dry_run_flag": "--dry-run" in help_lower,
+                "supports_print_flag": "--print" in help_lower,
                 "supports_yes_flag": self._yes_flag is not None,
                 "supports_auto_approve": self._auto_approve_flag is not None,
                 "supports_skip_permissions": self._skip_permissions_flag is not None,
                 "supports_non_interactive": self._non_interactive_flag is not None,
+                "supports_sandbox_flag": self._sandbox_flag is not None,
+                "supports_bypass_sandbox": self._bypass_sandbox_flag is not None,
+                "supports_exec_command": self._exec_supported,
             }
 
             logger.info(f"Detected capabilities: {capabilities}")
@@ -188,6 +206,9 @@ class CodexRunner:
             self._yes_flag = None
             self._model_flag = None
             self._non_interactive_flag = None
+            self._sandbox_flag = None
+            self._bypass_sandbox_flag = None
+            self._exec_supported = False
             self._read_only_flag = None
             self._auto_approve_flag = None
             self._skip_permissions_flag = None
@@ -203,6 +224,9 @@ class CodexRunner:
                 "supports_auto_approve": False,
                 "supports_skip_permissions": False,
                 "supports_non_interactive": False,
+                "supports_sandbox_flag": False,
+                "supports_bypass_sandbox": False,
+                "supports_exec_command": False,
             }
 
     def run_plan(
@@ -284,6 +308,9 @@ class CodexRunner:
         cmd = [self.codex_bin]
         stdin_input = None
 
+        if capabilities.get("supports_exec_command"):
+            cmd.append("exec")
+
         if capabilities.get("supports_path_flag") and self.target_repo and self._path_flag:
             cmd.extend([self._path_flag, str(self.target_repo)])
 
@@ -302,6 +329,8 @@ class CodexRunner:
                 cmd.append(self._read_only_flag)
             elif capabilities.get("supports_dry_run_flag"):
                 cmd.append("--dry-run")
+            elif capabilities.get("supports_sandbox_flag") and self._sandbox_flag:
+                cmd.extend([self._sandbox_flag, "read-only"])
 
             if capabilities.get("supports_print_flag"):
                 cmd.append("--print")
@@ -316,6 +345,10 @@ class CodexRunner:
 
             if capabilities.get("supports_non_interactive") and self._non_interactive_flag:
                 cmd.append(self._non_interactive_flag)
+            elif capabilities.get("supports_bypass_sandbox") and self._bypass_sandbox_flag:
+                cmd.append(self._bypass_sandbox_flag)
+            elif capabilities.get("supports_sandbox_flag") and self._sandbox_flag:
+                cmd.extend([self._sandbox_flag, "danger-full-access"])
 
         if capabilities.get("supports_prompt_flag") and self._prompt_flag:
             cmd.extend([self._prompt_flag, prompt])

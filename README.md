@@ -6,6 +6,8 @@
 [![Tests](https://img.shields.io/badge/tests-6%2F6_passing-success)](#test-results)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 
+<!-- Note: keep status badges aligned with docs/PHASE2_COMPLETE.md -->
+
 ---
 
 ## What is Milton?

@@ -11,29 +11,44 @@ from milton_orchestrator.prompt_builder import (
 class TestExtractCommandType:
     """Tests for command type extraction"""
 
-    def test_code_prefix(self):
-        cmd_type, content = extract_command_type("CODE: implement new feature")
-        assert cmd_type == "CODE"
+    def test_claude_prefix(self):
+        cmd_type, content = extract_command_type("CLAUDE: implement new feature")
+        assert cmd_type == "CLAUDE_CODE"
         assert content == "implement new feature"
+
+    def test_codex_prefix(self):
+        cmd_type, content = extract_command_type("CODEX: fix bug")
+        assert cmd_type == "CODEX_CODE"
+        assert content == "fix bug"
 
     def test_research_prefix(self):
         cmd_type, content = extract_command_type("RESEARCH: how does auth work?")
         assert cmd_type == "RESEARCH"
         assert content == "how does auth work?"
 
-    def test_lowercase_code_prefix(self):
-        cmd_type, content = extract_command_type("code: fix bug")
-        assert cmd_type == "CODE"
+    def test_remind_prefix(self):
+        cmd_type, content = extract_command_type("REMIND: in 10m | Stretch")
+        assert cmd_type == "REMINDER"
+        assert content == "in 10m | Stretch"
+
+    def test_lowercase_claude_prefix(self):
+        cmd_type, content = extract_command_type("claude: fix bug")
+        assert cmd_type == "CLAUDE_CODE"
         assert content == "fix bug"
 
-    def test_no_prefix_defaults_to_code(self):
+    def test_space_before_colon(self):
+        cmd_type, content = extract_command_type("claude : fix spacing")
+        assert cmd_type == "CLAUDE_CODE"
+        assert content == "fix spacing"
+
+    def test_no_prefix_defaults_to_chat(self):
         cmd_type, content = extract_command_type("just do something")
-        assert cmd_type == "CODE"
+        assert cmd_type == "CHAT"
         assert content == "just do something"
 
     def test_whitespace_handling(self):
-        cmd_type, content = extract_command_type("  CODE:   spaced content  ")
-        assert cmd_type == "CODE"
+        cmd_type, content = extract_command_type("  CLAUDE:   spaced content  ")
+        assert cmd_type == "CLAUDE_CODE"
         assert content == "spaced content"
 
 

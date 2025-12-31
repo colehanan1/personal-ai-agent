@@ -3,6 +3,8 @@
 import json
 import logging
 import time
+from queue import Queue
+from threading import Thread
 from typing import Iterator, Optional, Dict, Any
 
 import requests
@@ -157,3 +159,38 @@ def subscribe_with_reconnect(
             if consecutive_errors >= 10:
                 logger.error("Too many consecutive ntfy errors. Raising exception.")
                 raise
+
+
+def subscribe_topics_with_reconnect(
+    client: NtfyClient,
+    topics: list[str],
+    max_backoff: int = 300,
+) -> Iterator[NtfyMessage]:
+    """
+    Subscribe to multiple topics with automatic reconnection.
+
+    Args:
+        client: NtfyClient instance
+        topics: List of topics to subscribe to
+        max_backoff: Maximum backoff time in seconds
+
+    Yields:
+        NtfyMessage objects from any topic
+    """
+    filtered = [topic for topic in topics if topic]
+    unique_topics = list(dict.fromkeys(filtered))
+    if not unique_topics:
+        raise ValueError("At least one ntfy topic is required for subscription")
+
+    queue: Queue[NtfyMessage] = Queue()
+
+    def _worker(topic_name: str) -> None:
+        for msg in subscribe_with_reconnect(client, topic_name, max_backoff=max_backoff):
+            queue.put(msg)
+
+    for topic in unique_topics:
+        thread = Thread(target=_worker, args=(topic,), daemon=True)
+        thread.start()
+
+    while True:
+        yield queue.get()

@@ -42,6 +42,12 @@ CODEX_MODEL=gpt-5.2-codex
 ENABLE_CODEX_FALLBACK=true
 ```
 
+**Optional routing topics:**
+```bash
+CLAUDE_TOPIC=milton-briefing-claude
+CODEX_TOPIC=milton-briefing-codex
+```
+
 If you plan to use Codex fallback, ensure your Codex CLI authentication is set up
 (for example `OPENAI_API_KEY` if required by your Codex install).
 
@@ -90,19 +96,27 @@ systemctl --user enable milton-orchestrator
 
 Install the [ntfy app](https://ntfy.sh) and subscribe to your topics.
 
-#### Send a Coding Request
+#### Send a Claude Coding Request
 
 Send a message to `milton-briefing-code-ask`:
 
 ```
-CODE: Add a login feature with email and password authentication
+CLAUDE: Add a login feature with email and password authentication
 ```
 
 The orchestrator will:
 1. Send ACK to your phone
-2. Research with Perplexity
+2. (Optional) Research with Perplexity
 3. Execute Claude Code (fallbacks to Codex CLI if Claude is unavailable/limited)  
 4. Send results back to your phone
+
+#### Send a Codex Coding Request
+
+```
+CODEX: Add pytest coverage for the authentication module
+```
+
+This runs Codex directly (no Claude).
 
 #### Send a Research Request
 
@@ -112,21 +126,30 @@ RESEARCH: How does the auth system work?
 
 This only runs Perplexity research - no code changes.
 
+#### Send a Reminder or Alarm
+
+```
+REMIND: in 30m | Stretch
+ALARM: at 07:00 | Wake up
+REMIND: list
+REMIND: cancel 12
+```
+
 ### Example Messages
 
 **Add a feature:**
 ```
-CODE: Implement a REST API endpoint for user registration
+CLAUDE: Implement a REST API endpoint for user registration
 ```
 
 **Fix a bug:**
 ```
-CODE: Fix the memory leak in the background worker
+CLAUDE: Fix the memory leak in the background worker
 ```
 
 **Write tests:**
 ```
-Add pytest tests for the authentication module
+CODEX: Add pytest tests for the authentication module
 ```
 
 **Research only:**
@@ -230,7 +253,7 @@ CLAUDE_BIN=/path/to/claude
 
 ## Next Steps
 
-1. **Test with a small request** - Send a simple CODE request from your phone
+1. **Test with a small request** - Send a simple CLAUDE or CODEX request from your phone
 2. **Monitor logs** - Watch `journalctl` to see the workflow
 3. **Check output** - Review the generated code and summaries
 4. **Enable service** - Run `systemctl --user enable milton-orchestrator`
@@ -248,6 +271,7 @@ milton/
 │   ├── prompt_builder.py       # Prompt construction
 │   ├── claude_runner.py        # Claude Code wrapper
 │   └── codex_runner.py         # Codex CLI wrapper
+│   └── reminders.py            # Reminder scheduling
 ├── tests/                      # Unit tests (49 tests)
 ├── scripts/
 │   ├── install.sh              # Installation script

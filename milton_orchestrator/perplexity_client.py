@@ -5,6 +5,7 @@ import time
 from typing import Optional, Dict, Any
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 import requests
 
 # Import new structured prompting system
@@ -20,8 +21,6 @@ try:
 except ImportError:
     STRUCTURED_PROMPTING_AVAILABLE = False
     logger.warning("Structured prompting system not available - using legacy mode")
-
-logger = logging.getLogger(__name__)
 
 
 class PerplexityClient:

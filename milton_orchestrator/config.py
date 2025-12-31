@@ -15,6 +15,8 @@ class Config:
     ntfy_base_url: str
     ask_topic: str
     answer_topic: str
+    claude_topic: str
+    codex_topic: str
 
     # Perplexity settings
     perplexity_api_key: str
@@ -34,6 +36,16 @@ class Config:
     enable_codex_fallback: bool
     codex_fallback_on_any_failure: bool
     claude_fallback_on_limit: bool
+
+    # Routing and mode controls
+    enable_prefix_routing: bool
+    enable_claude_pipeline: bool
+    enable_codex_pipeline: bool
+    enable_research_mode: bool
+    enable_reminders: bool
+    perplexity_in_claude_mode: bool
+    perplexity_in_codex_mode: bool
+    perplexity_in_research_mode: bool
 
     # Logging and state
     log_dir: Path
@@ -79,6 +91,8 @@ class Config:
         ntfy_base_url = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
         ask_topic = os.getenv("ASK_TOPIC", "milton-briefing-code-ask")
         answer_topic = os.getenv("ANSWER_TOPIC", "milton-briefing-code")
+        claude_topic = os.getenv("CLAUDE_TOPIC", "").strip()
+        codex_topic = os.getenv("CODEX_TOPIC", "").strip()
 
         # Perplexity settings
         perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "")
@@ -117,6 +131,31 @@ class Config:
             os.getenv("CLAUDE_FALLBACK_ON_LIMIT"), True
         )
 
+        enable_prefix_routing = parse_bool(
+            os.getenv("ENABLE_PREFIX_ROUTING"), True
+        )
+        enable_claude_pipeline = parse_bool(
+            os.getenv("ENABLE_CLAUDE_PIPELINE"), True
+        )
+        enable_codex_pipeline = parse_bool(
+            os.getenv("ENABLE_CODEX_PIPELINE"), True
+        )
+        enable_research_mode = parse_bool(
+            os.getenv("ENABLE_RESEARCH_MODE"), True
+        )
+        enable_reminders = parse_bool(
+            os.getenv("ENABLE_REMINDERS"), True
+        )
+        perplexity_in_claude_mode = parse_bool(
+            os.getenv("PERPLEXITY_IN_CLAUDE_MODE"), True
+        )
+        perplexity_in_codex_mode = parse_bool(
+            os.getenv("PERPLEXITY_IN_CODEX_MODE"), True
+        )
+        perplexity_in_research_mode = parse_bool(
+            os.getenv("PERPLEXITY_IN_RESEARCH_MODE"), True
+        )
+
         # Logging and state
         home = Path.home()
         log_dir = Path(os.getenv("LOG_DIR", home / ".local/state/milton_orchestrator/logs"))
@@ -131,6 +170,8 @@ class Config:
             ntfy_base_url=ntfy_base_url,
             ask_topic=ask_topic,
             answer_topic=answer_topic,
+            claude_topic=claude_topic,
+            codex_topic=codex_topic,
             perplexity_api_key=perplexity_api_key,
             perplexity_model=perplexity_model,
             perplexity_timeout=perplexity_timeout,
@@ -144,6 +185,14 @@ class Config:
             enable_codex_fallback=enable_codex_fallback,
             codex_fallback_on_any_failure=codex_fallback_on_any_failure,
             claude_fallback_on_limit=claude_fallback_on_limit,
+            enable_prefix_routing=enable_prefix_routing,
+            enable_claude_pipeline=enable_claude_pipeline,
+            enable_codex_pipeline=enable_codex_pipeline,
+            enable_research_mode=enable_research_mode,
+            enable_reminders=enable_reminders,
+            perplexity_in_claude_mode=perplexity_in_claude_mode,
+            perplexity_in_codex_mode=perplexity_in_codex_mode,
+            perplexity_in_research_mode=perplexity_in_research_mode,
             log_dir=log_dir,
             state_dir=state_dir,
             max_output_size=max_output_size,

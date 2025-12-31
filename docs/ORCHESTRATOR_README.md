@@ -8,6 +8,8 @@ A production-grade voice-to-code orchestrator that receives text commands from y
 - **AI-Powered Research**: Uses Perplexity AI to research and optimize prompts
 - **Automated Code Execution**: Runs Claude Code CLI to implement changes
 - **Codex Fallback**: Automatically falls back to Codex CLI on Claude usage limits or missing binary (plan-first then execute)
+- **Routing Controls**: Prefix or topic-based triggers for Claude/Codex/Research/Chat
+- **Reminders**: Schedule reminders or alarms via ntfy messages
 - **Real-time Status Updates**: Sends progress updates back to your iPhone
 - **Robust Error Handling**: Retries, timeouts, and graceful fallbacks
 - **Production-Ready**: Systemd service, logging, and crash-safe operation
@@ -123,22 +125,32 @@ systemctl --user stop milton-orchestrator
 
 Send messages to your configured `ASK_TOPIC` (default: `milton-briefing-code-ask`):
 
-### CODE Request (Full Pipeline)
+### CLAUDE Request (Coding Pipeline)
 
-Prefix with `CODE:` or just send plain text:
-
-```
-CODE: Add a login feature to the web app with email and password authentication
-```
+Prefix with `CLAUDE:`:
 
 ```
-Implement unit tests for the authentication module using pytest
+CLAUDE: Add a login feature to the web app with email and password authentication
 ```
 
 This will:
-1. Research the request with Perplexity
+1. (Optional) Research the request with Perplexity
 2. Build an optimized prompt
 3. Execute Claude Code in your target repo (fallback to Codex if Claude is unavailable/limited)
+4. Send results back to your iPhone
+
+### CODEX Request (Codex-Only Pipeline)
+
+Prefix with `CODEX:`:
+
+```
+CODEX: Implement unit tests for the authentication module using pytest
+```
+
+This will:
+1. (Optional) Research the request with Perplexity
+2. Build an optimized prompt
+3. Execute Codex directly (no Claude)
 4. Send results back to your iPhone
 
 ### RESEARCH Request (No Code Changes)
@@ -151,8 +163,32 @@ RESEARCH: How does the authentication system work in this codebase?
 
 This will:
 1. Research the question with Perplexity
-2. Send the research back to your iPhone
+2. Send a structured summary (with sources if returned)
 3. **No code changes will be made**
+
+### REMIND / ALARM (Reminders)
+
+```
+REMIND: in 30m | Stretch
+ALARM: at 07:00 | Wake up
+REMIND: list
+REMIND: cancel 12
+```
+
+Reminders are scheduled locally and delivered via ntfy when due.
+
+### CHAT (Default)
+
+Messages without prefixes are handled as chat (no Perplexity, no code execution).
+
+### Topic-Based Triggers
+
+You can route messages by topic instead of prefixes:
+
+- `CLAUDE_TOPIC`: any message arriving on this topic runs the Claude pipeline
+- `CODEX_TOPIC`: any message arriving on this topic runs the Codex pipeline
+
+Topic routing takes priority over prefixes.
 
 ## Environment Variables
 
@@ -170,6 +206,21 @@ This will:
 | `NTFY_BASE_URL` | ntfy server URL | `https://ntfy.sh` |
 | `ASK_TOPIC` | Topic for incoming requests | `milton-briefing-code-ask` |
 | `ANSWER_TOPIC` | Topic for responses | `milton-briefing-code` |
+| `CLAUDE_TOPIC` | Optional topic for Claude pipeline | *(empty)* |
+| `CODEX_TOPIC` | Optional topic for Codex pipeline | *(empty)* |
+
+### Routing Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENABLE_PREFIX_ROUTING` | Enable prefix routing (CLAUDE:/CODEX:/RESEARCH:/REMIND:/ALARM:) | `true` |
+| `ENABLE_CLAUDE_PIPELINE` | Enable Claude pipeline | `true` |
+| `ENABLE_CODEX_PIPELINE` | Enable Codex pipeline | `true` |
+| `ENABLE_RESEARCH_MODE` | Enable research mode | `true` |
+| `ENABLE_REMINDERS` | Enable reminders | `true` |
+| `PERPLEXITY_IN_CLAUDE_MODE` | Use Perplexity in Claude pipeline | `true` |
+| `PERPLEXITY_IN_CODEX_MODE` | Use Perplexity in Codex pipeline | `true` |
+| `PERPLEXITY_IN_RESEARCH_MODE` | Use Perplexity in research mode | `true` |
 
 ### Perplexity Configuration
 
@@ -328,6 +379,21 @@ Each file is timestamped for easy reference.
    tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
    ```
 
+### Reminders not firing
+
+1. Ensure reminders are enabled:
+   ```bash
+   ENABLE_REMINDERS=true
+   ```
+2. Check the reminders database:
+   ```bash
+   ls -lah ~/.local/state/milton_orchestrator/reminders.sqlite3
+   ```
+3. Watch logs for scheduler activity:
+   ```bash
+   tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
+   ```
+
 ## Security
 
 - **Never commit .env file**: It contains secrets
@@ -348,6 +414,7 @@ milton_orchestrator/
 ├── prompt_builder.py        # Claude prompt construction
 ├── claude_runner.py         # Claude Code subprocess wrapper
 ├── codex_runner.py          # Codex CLI subprocess wrapper
+├── reminders.py             # Reminders and scheduling
 └── orchestrator.py          # Main orchestration logic
 
 tests/
@@ -355,7 +422,9 @@ tests/
 ├── test_perplexity_client.py # Perplexity client tests
 ├── test_claude_runner.py    # Claude runner tests
 ├── test_ntfy_parsing.py     # ntfy parsing tests
-└── test_orchestrator_fallback.py # Fallback logic tests
+├── test_orchestrator_fallback.py # Fallback logic tests
+├── test_reminders.py        # Reminder scheduling tests
+└── test_routing_modes.py    # Routing mode tests
 
 scripts/
 ├── install.sh               # Installation script

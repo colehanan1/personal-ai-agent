@@ -1,6 +1,7 @@
 """Build optimized prompts for Claude Code"""
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -39,7 +40,17 @@ class ClaudePromptBuilder:
         # Context section
         sections.append("## Context")
         sections.append(f"Repository: {self.target_repo}")
-        sections.append(f"Request: {user_request}")
+        sections.append(f"Objective: {user_request}")
+        sections.append("")
+
+        sections.append("## Constraints")
+        sections.append("- Respect repository boundaries and existing conventions")
+        sections.append("- Avoid unrelated refactors or edits outside the request scope")
+        sections.append("")
+
+        sections.append("## Repository Boundaries")
+        sections.append(f"- Working directory: {self.target_repo}")
+        sections.append("- Do not edit files outside the repository")
         sections.append("")
 
         # Research/Specification section
@@ -246,21 +257,29 @@ class ClaudePromptBuilder:
 
 def extract_command_type(message: str) -> tuple[str, str]:
     """
-    Extract command type and actual content from message.
+    Extract routing prefix and content from a message.
 
     Args:
         message: The raw message from ntfy
 
     Returns:
-        Tuple of (command_type, content) where command_type is 'CODE', 'RESEARCH', or 'CODE' (default)
+        Tuple of (command_type, content) where command_type is one of:
+        'CLAUDE_CODE', 'CODEX_CODE', 'RESEARCH', 'REMINDER', or 'CHAT' (default)
     """
-    message = message.strip()
+    message = message.lstrip()
+    match = re.match(r"^\s*\[?\s*(CLAUDE|CODEX|RESEARCH|REMIND|ALARM)\s*:\s*(.*)$", message, re.IGNORECASE)
+    if match:
+        kind = match.group(1).upper()
+        payload = match.group(2).strip()
+        if message.strip().startswith("[") and payload.endswith("]"):
+            payload = payload[:-1].strip()
+        if kind == "CLAUDE":
+            return "CLAUDE_CODE", payload
+        if kind == "CODEX":
+            return "CODEX_CODE", payload
+        if kind == "RESEARCH":
+            return "RESEARCH", payload
+        if kind in {"REMIND", "ALARM"}:
+            return "REMINDER", payload
 
-    # Check for explicit command prefixes
-    if message.upper().startswith("CODE:"):
-        return "CODE", message[5:].strip()
-    elif message.upper().startswith("RESEARCH:"):
-        return "RESEARCH", message[9:].strip()
-
-    # Default to CODE for backward compatibility
-    return "CODE", message
+    return "CHAT", message.strip()

@@ -32,6 +32,16 @@ Environment Variables:
   NTFY_BASE_URL          ntfy server URL (default: https://ntfy.sh)
   ASK_TOPIC              Topic for incoming requests (default: milton-briefing-code-ask)
   ANSWER_TOPIC           Topic for responses (default: milton-briefing-code)
+  CLAUDE_TOPIC           Topic for Claude code requests (default: empty)
+  CODEX_TOPIC            Topic for Codex code requests (default: empty)
+  ENABLE_PREFIX_ROUTING  Enable prefix-based routing (default: true)
+  ENABLE_CLAUDE_PIPELINE Enable Claude coding pipeline (default: true)
+  ENABLE_CODEX_PIPELINE  Enable Codex coding pipeline (default: true)
+  ENABLE_RESEARCH_MODE   Enable research mode (default: true)
+  ENABLE_REMINDERS       Enable reminders (default: true)
+  PERPLEXITY_IN_CLAUDE_MODE  Use Perplexity in CLAUDE mode (default: true)
+  PERPLEXITY_IN_CODEX_MODE   Use Perplexity in CODEX mode (default: true)
+  PERPLEXITY_IN_RESEARCH_MODE Use Perplexity in RESEARCH mode (default: true)
   PERPLEXITY_MODEL       Perplexity model (default: sonar-pro)
   CLAUDE_BIN             Claude Code binary path (default: claude)
   CODEX_BIN              Codex CLI binary path (default: codex)
@@ -42,9 +52,12 @@ Environment Variables:
   CODEX_EXTRA_ARGS       Extra Codex CLI flags (quoted string)
 
 Message Formats:
-  CODE: <request>        Run full pipeline with Claude Code execution
+  CLAUDE: <request>      Run Claude pipeline (may fall back to Codex on limits)
+  CODEX: <request>       Run Codex pipeline directly
   RESEARCH: <request>    Run Perplexity research only, no code changes
-  <request>              Default to CODE mode
+  REMIND: <spec>         Schedule a reminder (e.g. "in 10m | Stretch")
+  ALARM: <spec>          Schedule an alarm (same syntax as REMIND)
+  <request>              Default to chat mode (no coding pipeline)
         """,
     )
 
@@ -90,6 +103,8 @@ Message Formats:
     logger.info(f"Target Repository: {config.target_repo}")
     logger.info(f"Ask Topic: {config.ask_topic}")
     logger.info(f"Answer Topic: {config.answer_topic}")
+    logger.info(f"Claude Topic: {config.claude_topic or '(none)'}")
+    logger.info(f"Codex Topic: {config.codex_topic or '(none)'}")
     logger.info(f"Claude Binary: {config.claude_bin}")
     logger.info(f"Codex Binary: {config.codex_bin}")
     logger.info(f"Codex Model: {config.codex_model}")
@@ -97,6 +112,14 @@ Message Formats:
         f"Codex Fallback: enabled={config.enable_codex_fallback}, "
         f"any_failure={config.codex_fallback_on_any_failure}, "
         f"on_limit={config.claude_fallback_on_limit}"
+    )
+    logger.info(
+        "Routing: prefix=%s claude=%s codex=%s research=%s reminders=%s",
+        config.enable_prefix_routing,
+        config.enable_claude_pipeline,
+        config.enable_codex_pipeline,
+        config.enable_research_mode,
+        config.enable_reminders,
     )
     logger.info(f"Dry Run: {args.dry_run}")
     logger.info("=" * 60)
