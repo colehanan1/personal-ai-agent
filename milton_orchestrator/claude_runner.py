@@ -193,9 +193,19 @@ class ClaudeRunner:
             if os.getenv("CLAUDE_CODE_ULTRATHINK"):
                 env["CLAUDE_CODE_ULTRATHINK"] = os.getenv("CLAUDE_CODE_ULTRATHINK")
 
+            # Pass through Claude Code plan mode settings
+            if os.getenv("CLAUDE_CODE_SKIP_PLAN_APPROVAL"):
+                env["CLAUDE_CODE_SKIP_PLAN_APPROVAL"] = os.getenv("CLAUDE_CODE_SKIP_PLAN_APPROVAL")
+            if os.getenv("CLAUDE_CODE_AUTO_ACCEPT_PLAN"):
+                env["CLAUDE_CODE_AUTO_ACCEPT_PLAN"] = os.getenv("CLAUDE_CODE_AUTO_ACCEPT_PLAN")
+            if os.getenv("CLAUDE_CODE_ALWAYS_PLAN"):
+                env["CLAUDE_CODE_ALWAYS_PLAN"] = os.getenv("CLAUDE_CODE_ALWAYS_PLAN")
+
             logger.info(f"Claude Code environment: AUTO_APPROVE={env.get('CLAUDE_CODE_AUTO_APPROVE')}, "
                        f"TRUST_MODE={env.get('CLAUDE_CODE_TRUST_MODE')}, "
-                       f"ULTRATHINK={env.get('CLAUDE_CODE_ULTRATHINK')}")
+                       f"ULTRATHINK={env.get('CLAUDE_CODE_ULTRATHINK')}, "
+                       f"SKIP_PLAN_APPROVAL={env.get('CLAUDE_CODE_SKIP_PLAN_APPROVAL')}, "
+                       f"AUTO_ACCEPT_PLAN={env.get('CLAUDE_CODE_AUTO_ACCEPT_PLAN')}")
 
             result = subprocess.run(
                 cmd,
