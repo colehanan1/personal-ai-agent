@@ -21,6 +21,7 @@ def test_weaviate_backend_add_memory_calls_insert():
         tags=["alpha"],
         importance=0.5,
         source="chat",
+        evidence=["file.txt"],
     )
 
     memory_id = backend.append_short_term(item)
@@ -32,6 +33,7 @@ def test_weaviate_backend_add_memory_calls_insert():
     metadata = json.loads(props["metadata"])
     assert metadata["type"] == "fact"
     assert metadata["tags"] == ["alpha"]
+    assert metadata["evidence"] == ["file.txt"]
 
 
 def test_weaviate_backend_upsert_profile_calls_insert():

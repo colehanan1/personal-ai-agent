@@ -15,6 +15,11 @@ import sys
 
 
 from integrations import ArxivAPI, NewsAPI
+from agents.memory_hooks import (
+    build_memory_context,
+    record_memory,
+    should_store_responses,
+)
 
 load_dotenv()
 
@@ -94,6 +99,10 @@ class FRONTIER:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
 
+        memory_context = build_memory_context("FRONTIER", prompt)
+        if memory_context:
+            messages.append({"role": "system", "content": memory_context})
+
         messages.append({"role": "user", "content": prompt})
 
         payload = {
@@ -107,7 +116,25 @@ class FRONTIER:
             response = requests.post(url, json=payload, timeout=120, headers=headers)
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            reply = data["choices"][0]["message"]["content"]
+            record_memory(
+                "FRONTIER",
+                prompt,
+                memory_type="crumb",
+                tags=["request"],
+                importance=0.2,
+                source="user",
+            )
+            if should_store_responses():
+                record_memory(
+                    "FRONTIER",
+                    reply,
+                    memory_type="crumb",
+                    tags=["response"],
+                    importance=0.1,
+                    source="assistant",
+                )
+            return reply
         except Exception as e:
             logger.error(f"LLM API error: {e}")
             raise

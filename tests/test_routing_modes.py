@@ -171,6 +171,26 @@ def test_codex_topic_without_prefix(config):
     orchestrator.codex_runner.run.assert_called_once()
 
 
+def test_remind_prefix_routes_to_reminder(config):
+    orchestrator = make_orchestrator(config)
+
+    mode, payload, kind = orchestrator.route_message(config.ask_topic, "REMIND: in 10m | Stretch")
+
+    assert mode == "REMINDER"
+    assert kind == "REMIND"
+    assert payload.startswith("in 10m")
+
+
+def test_alarm_prefix_routes_to_reminder(config):
+    orchestrator = make_orchestrator(config)
+
+    mode, payload, kind = orchestrator.route_message(config.ask_topic, "ALARM: 7am | Wake")
+
+    assert mode == "REMINDER"
+    assert kind == "ALARM"
+    assert payload.startswith("7am")
+
+
 def test_claude_usage_limit_fallback_only_in_claude_mode(config, tmp_path):
     orchestrator = make_orchestrator(config)
     orchestrator.claude_runner = MagicMock()

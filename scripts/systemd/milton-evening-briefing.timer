@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Milton evening briefing capture
+
+[Timer]
+OnCalendar=*-*-* 21:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

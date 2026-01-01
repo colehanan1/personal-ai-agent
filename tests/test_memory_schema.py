@@ -25,8 +25,10 @@ def test_memory_item_tag_normalization():
         content="Test",
         source="chat",
         tags=["Alpha", "alpha", " ", "Beta"],
+        evidence=["File.txt", "file.txt", " "],
     )
     assert item.tags == ["alpha", "beta"]
+    assert item.evidence == ["File.txt", "file.txt"]
 
 
 def test_profile_and_project_validation():

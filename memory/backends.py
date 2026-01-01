@@ -269,6 +269,7 @@ class WeaviateBackend:
                         "importance": item.importance,
                         "source": item.source,
                         "request_id": item.request_id,
+                        "evidence": item.evidence,
                     }
                 ),
             }
@@ -295,6 +296,7 @@ class WeaviateBackend:
                 "importance": metadata.get("importance", 0.5),
                 "source": metadata.get("source") or "weaviate",
                 "request_id": metadata.get("request_id"),
+                "evidence": metadata.get("evidence") or [],
             }
             try:
                 items.append(MemoryItem.model_validate(data))

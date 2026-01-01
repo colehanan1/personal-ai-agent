@@ -5,6 +5,12 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 from dotenv import load_dotenv
 
+from agents.memory_hooks import (
+    build_memory_context,
+    record_memory,
+    should_store_responses,
+)
+
 load_dotenv()
 
 
@@ -95,10 +101,20 @@ class BaseAgent:
         Returns:
             Agent's response
         """
+        memory_type = kwargs.pop("memory_type", "crumb")
+        memory_tags = kwargs.pop("memory_tags", None)
+        memory_importance = kwargs.pop("memory_importance", None)
+        memory_request_id = kwargs.pop("memory_request_id", None)
+        store_response = kwargs.pop("memory_store_response", None)
+
         messages = []
 
         # Add system prompt
         messages.append({"role": "system", "content": self.system_prompt})
+
+        memory_context = build_memory_context(self.agent_name, user_message)
+        if memory_context:
+            messages.append({"role": "system", "content": memory_context})
 
         # Add context if provided
         if context:
@@ -107,4 +123,26 @@ class BaseAgent:
         # Add user message
         messages.append({"role": "user", "content": user_message})
 
-        return self._call_llm(messages, **kwargs)
+        response = self._call_llm(messages, **kwargs)
+
+        record_memory(
+            self.agent_name,
+            user_message,
+            memory_type=memory_type,
+            tags=memory_tags,
+            importance=memory_importance,
+            source="user",
+            request_id=memory_request_id,
+        )
+        if store_response is True or (store_response is None and should_store_responses()):
+            record_memory(
+                self.agent_name,
+                response,
+                memory_type="crumb",
+                tags=["response"],
+                importance=0.1,
+                source="assistant",
+                request_id=memory_request_id,
+            )
+
+        return response

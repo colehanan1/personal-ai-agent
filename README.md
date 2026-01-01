@@ -119,6 +119,12 @@ python scripts/healthcheck.py
 python scripts/nexus_morning.py
 ```
 
+### From iPhone (ntfy → Click-to-Open → Memory)
+
+From iPhone: **send** request → **receive** summary + tap-to-open link → **memory updated** with request_id + evidence.
+
+See `docs/IOS_OUTPUT_ACCESS.md` for tailnet-only click-to-open setup and message prefixes.
+
 To shut services down:
 
 ```bash
@@ -158,6 +164,16 @@ python scripts/nexus_morning.py
 cat inbox/morning/brief_*.json | jq '.brief'
 ```
 
+### Daily OS Loop (Evening → Overnight → Morning)
+
+```bash
+conda activate milton
+python scripts/evening_briefing.py
+python scripts/enhanced_morning_briefing.py
+```
+
+Optional: set `STATE_DIR` in `.env` to write goals/queue/inbox outside the repo root.
+
 ### Troubleshooting
 
 - `scripts/dev_up.sh` fails on `.env`: run `cp .env.example .env` and fill required keys.
@@ -190,8 +206,8 @@ response = nexus.process_message("Write a Python function to parse CSV files")
 ### Morning Automation
 
 ```bash
-# Install systemd timers (runs at 8 AM daily)
-bash scripts/install_systemd.sh
+# Install daily OS systemd timers (evening capture, overnight queue, morning briefing)
+bash scripts/systemd/install_daily_os.sh
 
 # Verify timers are active
 systemctl --user list-timers | grep milton
@@ -204,18 +220,14 @@ journalctl --user -u milton-nexus-morning.service -f
 
 ```bash
 # Queue a job before bed
-cat > job_queue/tonight/my_task.json <<EOF
-{
-  "job_id": "analyze_data_$(date +%Y%m%d)",
-  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "task": "Analyze yesterday's experiment data and generate summary plots",
-  "priority": "HIGH"
-}
-EOF
+python - <<'PY'
+from milton_queue import enqueue_job
+enqueue_job("cortex_task", {"task": "Analyze yesterday's experiment data"}, priority="high")
+PY
 
 # Job processes automatically between 10 PM - 6 AM
 # Check results in the morning
-ls outputs/analyze_data_*/
+ls job_queue/archive/
 ```
 
 ### Memory Operations
@@ -367,6 +379,9 @@ Wake up to completed analysis, not running scripts.
 - **[Phase 2 Completion Report](docs/PHASE2_COMPLETE.md)** - Test results & validation
 - **[System Documentation](docs/SYSTEM_DOCUMENTATION.md)** - Architecture deep-dive
 - **[Memory Spec](docs/MEMORY_SPEC.md)** - Deterministic memory storage + retrieval rules
+- **[Agent Context Rules](docs/AGENT_CONTEXT_RULES.md)** - Evidence-backed context + routing rules
+- **[Daily OS Loop](docs/DAILY_OS.md)** - Goals, overnight queue, briefings, systemd timers
+- **[iOS Output Access](docs/IOS_OUTPUT_ACCESS.md)** - Tailnet-only click-to-open outputs from ntfy
 - **[Orchestrator Quickstart](docs/ORCHESTRATOR_QUICKSTART.md)** - ntfy outputs via Tailscale click-to-open or SMB share
 - **[Implementation Plan](docs/IMPLEMENTATION_PLAN.md)** - Original design decisions
 

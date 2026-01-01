@@ -46,8 +46,12 @@ credentials.json
 /job_queue/archive/
 
 # Goals tracking
-/goals/current/
 /goals/archive/
+/goals/current/*
+!/goals/current/
+!/goals/current/daily.yaml
+!/goals/current/weekly.yaml
+!/goals/current/monthly.yaml
 
 # =============================================================================
 # Prompts (system configuration)

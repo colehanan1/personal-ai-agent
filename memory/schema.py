@@ -8,7 +8,15 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-MemoryType = Literal["fact", "preference", "project", "decision", "crumb"]
+MemoryType = Literal[
+    "fact",
+    "preference",
+    "project",
+    "decision",
+    "crumb",
+    "request",
+    "result",
+]
 
 
 def _now_utc() -> datetime:
@@ -40,6 +48,7 @@ class MemoryItem(BaseModel):
     importance: float = Field(default=0.5, ge=0.0, le=1.0)
     source: str = Field(min_length=1)
     request_id: Optional[str] = None
+    evidence: list[str] = Field(default_factory=list)
 
     @field_validator("ts")
     @classmethod
@@ -53,6 +62,11 @@ class MemoryItem(BaseModel):
     def _normalize_tags(cls, value: list[str]) -> list[str]:
         cleaned = _clean_list([str(item).strip().lower() for item in value or []])
         return cleaned
+
+    @field_validator("evidence")
+    @classmethod
+    def _normalize_evidence(cls, value: list[str]) -> list[str]:
+        return _clean_list(value or [])
 
 
 class UserProfile(BaseModel):

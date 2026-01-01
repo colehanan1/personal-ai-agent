@@ -9,6 +9,8 @@ This document defines the deterministic memory API and storage rules.
 - `project`: Project-related goals or context.
 - `decision`: Explicit choices that affect future actions.
 - `crumb`: Recent conversation crumbs or ephemeral context.
+- `request`: Inbound requests captured from ntfy/iPhone.
+- `result`: Outputs and summaries with evidence links or paths.
 
 ## Retrieval Ranking Logic
 
@@ -37,6 +39,7 @@ This document defines the deterministic memory API and storage rules.
 - `UserProfile.evidence_ids` and `ProjectMemory.evidence_ids` must reference source
   `MemoryItem.id` values.
 - `upsert_user_profile` rejects updates without evidence ids.
+- `MemoryItem.evidence` stores supporting paths/URLs when available.
 
 ## Fail-safe Storage
 
@@ -44,3 +47,9 @@ This document defines the deterministic memory API and storage rules.
   - `data/memory/short_term.jsonl`
   - `data/memory/long_term.jsonl`
 - JSONL records include a `record_type` and validated payload.
+
+## Agent Hooks
+
+- `MILTON_MEMORY_ENABLED` (default: true) toggles automatic agent hooks.
+- `MILTON_MEMORY_STORE_RESPONSES` (default: false) stores assistant replies as crumbs.
+- `MILTON_MEMORY_CONTEXT_LIMIT` and `MILTON_MEMORY_CONTEXT_MAX_CHARS` cap injected context.

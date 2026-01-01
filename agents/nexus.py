@@ -3,14 +3,14 @@ NEXUS - Orchestration Hub
 Coordinates between agents, generates briefings, and routes requests.
 """
 import requests
-from typing import Dict, Any, Optional, List
-import os
-import json
+from dataclasses import dataclass, field
 from datetime import datetime
-from dotenv import load_dotenv
 import logging
-import sys
+import os
 import re
+from typing import Any, Dict, Optional, List
+
+from dotenv import load_dotenv
 
 from integrations import (
     HomeAssistantAPI,
@@ -20,10 +20,101 @@ from integrations import (
     CalendarAPI,
     WebSearchAPI,
 )
+from agents.memory_hooks import memory_enabled, record_memory, should_store_responses
+from agents.tool_registry import (
+    ToolDefinition,
+    ToolResult,
+    get_tool_registry,
+)
+from memory.retrieve import query_relevant
+from memory.schema import MemoryItem
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class RoutingDecision:
+    route: str
+    rationale: str
+    context_ids: list[str] = field(default_factory=list)
+    tool_name: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ContextBullet:
+    text: str
+    evidence_ids: list[str]
+
+
+@dataclass(frozen=True)
+class ContextPacket:
+    query: str
+    bullets: list[ContextBullet] = field(default_factory=list)
+    unknowns: list[str] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+
+    @property
+    def context_ids(self) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for bullet in self.bullets:
+            for evidence_id in bullet.evidence_ids:
+                if evidence_id and evidence_id not in seen:
+                    seen.add(evidence_id)
+                    ordered.append(evidence_id)
+        return ordered
+
+    def to_prompt(self) -> str:
+        lines = ["CONTEXT PACKET (evidence-backed memory only)"]
+        if self.bullets:
+            lines.append("Relevant memory bullets:")
+            for bullet in self.bullets:
+                evidence = ", ".join(bullet.evidence_ids)
+                lines.append(f"- {bullet.text} [evidence: {evidence}]")
+        else:
+            lines.append("Relevant memory bullets: none")
+
+        lines.append("Unknowns / assumptions:")
+        if self.unknowns:
+            for item in self.unknowns:
+                lines.append(f"- Unknown: {item}")
+        if self.assumptions:
+            for item in self.assumptions:
+                lines.append(f"- Assumption: {item}")
+        if not self.unknowns and not self.assumptions:
+            lines.append("- None")
+
+        return "\n".join(lines)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "query": self.query,
+            "bullets": [
+                {"text": bullet.text, "evidence_ids": bullet.evidence_ids}
+                for bullet in self.bullets
+            ],
+            "unknowns": list(self.unknowns),
+            "assumptions": list(self.assumptions),
+            "context_ids": self.context_ids,
+        }
+
+
+@dataclass(frozen=True)
+class Response:
+    text: str
+    citations: list[str]
+    route_used: str
+    context_used: list[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "text": self.text,
+            "citations": list(self.citations),
+            "route_used": self.route_used,
+            "context_used": list(self.context_used),
+        }
 
 
 class NEXUS:
@@ -77,6 +168,8 @@ class NEXUS:
             "on",
         )
         self.web_lookup_max_results = int(os.getenv("WEB_LOOKUP_MAX_RESULTS", "5"))
+        self.tool_registry = get_tool_registry()
+        self._register_default_tools()
 
         logger.info("NEXUS agent initialized")
 
@@ -86,7 +179,11 @@ class NEXUS:
         return load_agent_context("NEXUS")
 
     def _call_llm(
-        self, prompt: str, system_prompt: Optional[str] = None, max_tokens: int = 2000
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        max_tokens: int = 2000,
+        context_packet: Optional[ContextPacket] = None,
     ) -> str:
         """Call vLLM API for inference."""
         url = f"{self.model_url}/v1/chat/completions"
@@ -102,6 +199,9 @@ class NEXUS:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
 
+        if context_packet:
+            messages.append({"role": "system", "content": context_packet.to_prompt()})
+
         messages.append({"role": "user", "content": prompt})
 
         payload = {
@@ -111,113 +211,223 @@ class NEXUS:
             "temperature": 0.7,
         }
 
-        try:
-            response = requests.post(url, json=payload, timeout=120, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"]
-        except Exception as e:
-            logger.error(f"LLM API error: {e}")
-            raise
+        response = requests.post(url, json=payload, timeout=120, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
 
-    def route_request(self, user_input: str) -> Dict[str, Any]:
-        """
-        Route user request to appropriate agent or integration.
+    def _register_default_tools(self) -> None:
+        self.register_tool(
+            ToolDefinition(
+                name="weather",
+                description="Current weather lookup",
+                keywords=("weather", "temperature", "forecast"),
+                handler=self._tool_weather,
+            ),
+            replace=True,
+        )
+        self.register_tool(
+            ToolDefinition(
+                name="arxiv",
+                description="arXiv paper search",
+                keywords=("arxiv", "paper", "papers", "publication", "preprint"),
+                handler=self._tool_arxiv,
+            ),
+            replace=True,
+        )
 
-        Args:
-            user_input: User's input
+    def register_tool(self, tool: ToolDefinition, replace: bool = True) -> None:
+        self.tool_registry.register(tool, replace=replace)
 
-        Returns:
-            Routing decision with target agent and context
-        """
-        prompt = f"""
-Analyze the following user request and determine how to route it:
+    def _tool_weather(self, user_text: str) -> ToolResult:
+        weather = self.weather.current_weather()
+        summary = (
+            f"{weather['location']}: {weather['temp']}°F, "
+            f"{weather['condition']} (high {weather['high']}°F, low {weather['low']}°F)"
+        )
+        return ToolResult(text=summary, citations=["weather:openweathermap"])
 
-User request: {user_input}
+    def _tool_arxiv(self, user_text: str) -> ToolResult:
+        max_results = self._parse_max_results(user_text, default=3)
+        papers = self.arxiv.search_papers(user_text, max_results=max_results)
+        if not papers:
+            return ToolResult(text="No papers found.", citations=[])
 
-Available options:
-1. CORTEX - For execution tasks (data analysis, code generation, overnight jobs)
-2. FRONTIER - For research and discovery (papers, news, monitoring)
-3. Direct integration - For simple queries (weather, home control, calendar)
-4. NEXUS (self) - For conversation and general assistance
+        lines = []
+        citations: list[str] = []
+        for paper in papers[:max_results]:
+            title = paper.get("title", "Untitled")
+            authors = ", ".join(paper.get("authors", [])[:3])
+            arxiv_id = paper.get("arxiv_id", "unknown")
+            pdf_url = paper.get("pdf_url")
+            if pdf_url:
+                citations.append(pdf_url)
+            lines.append(f"- {title} ({authors}) [arXiv:{arxiv_id}]")
 
-IMPORTANT: Respond with ONLY valid JSON, no other text:
-{{
-    "target": "CORTEX|FRONTIER|integration_name|NEXUS",
-    "reasoning": "explanation",
-    "context": {{"any": "relevant context"}}
-}}
-"""
+        return ToolResult(text="\n".join(lines), citations=citations)
 
-        response = self._call_llm(prompt, system_prompt=self.system_prompt, max_tokens=200)
-        routing = self._parse_routing_response(response)
-        return routing
-
-    def _parse_routing_response(self, response: str) -> Dict[str, Any]:
-        json_block = self._extract_json_block(response)
-        routing: Dict[str, Any] = {}
-
-        if json_block:
+    def _parse_max_results(self, text: str, default: int = 3) -> int:
+        match = re.search(r"\b(\d{1,2})\b", text)
+        if match:
             try:
-                routing = json.loads(json_block)
-            except Exception as exc:
-                logger.warning("Failed to parse routing JSON: %s", exc)
+                value = int(match.group(1))
+                return max(1, min(value, 10))
+            except ValueError:
+                return default
+        return default
 
-        if not routing:
-            target_match = re.search(
-                r"target\s*[:=]\s*['\"]?([A-Za-z_]+)", response, re.IGNORECASE
+    def build_context(self, user_text: str, budget_tokens: int = 1200) -> ContextPacket:
+        if not memory_enabled() or not user_text.strip():
+            return ContextPacket(
+                query=user_text,
+                bullets=[],
+                unknowns=["Memory disabled or empty request."],
+                assumptions=[],
             )
-            target = target_match.group(1).upper() if target_match else "NEXUS"
-            routing = {
-                "target": target,
-                "reasoning": "Routing parse failed; defaulting to NEXUS",
-                "context": {},
-            }
 
-        if "context" not in routing or not isinstance(routing.get("context"), dict):
-            routing["context"] = {}
+        limit = int(os.getenv("MILTON_MEMORY_CONTEXT_LIMIT", "8"))
+        recency_bias = float(os.getenv("MILTON_MEMORY_RECENCY_BIAS", "0.35"))
+        max_chars = int(os.getenv("MILTON_MEMORY_CONTEXT_MAX_CHARS", str(budget_tokens * 4)))
 
-        return routing
+        memories = query_relevant(
+            user_text,
+            limit=limit,
+            recency_bias=recency_bias,
+        )
 
-    def _extract_json_block(self, response: str) -> str:
-        # Try to extract from markdown code fence
-        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL)
-        if fenced:
-            return fenced.group(1)
-
-        # Find the first complete JSON object (balanced braces)
-        start = response.find("{")
-        if start == -1:
-            return ""
-
-        brace_count = 0
-        in_string = False
-        escape_next = False
-
-        for i in range(start, len(response)):
-            char = response[i]
-
-            if escape_next:
-                escape_next = False
+        bullets: list[ContextBullet] = []
+        current_chars = 0
+        for item in memories:
+            if not item.id:
                 continue
+            bullet_text = self._format_context_bullet(item)
+            evidence_ids = [item.id]
+            candidate = f"- {bullet_text} [evidence: {item.id}]"
+            if current_chars + len(candidate) > max_chars:
+                break
+            bullets.append(ContextBullet(text=bullet_text, evidence_ids=evidence_ids))
+            current_chars += len(candidate)
 
-            if char == '\\':
-                escape_next = True
-                continue
+        unknowns: list[str] = []
+        if not bullets:
+            unknowns.append("No evidence-backed memory available for this request.")
 
-            if char == '"' and not escape_next:
-                in_string = not in_string
-                continue
+        assumptions = ["Assume request is self-contained unless clarified."]
 
-            if not in_string:
-                if char == '{':
-                    brace_count += 1
-                elif char == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        return response[start : i + 1]
+        return ContextPacket(
+            query=user_text,
+            bullets=bullets,
+            unknowns=unknowns,
+            assumptions=assumptions,
+        )
 
-        return ""
+    def _format_context_bullet(self, item: MemoryItem) -> str:
+        content = " ".join(item.content.strip().split())
+        if len(content) > 220:
+            content = content[:217] + "..."
+        tag_text = ", ".join(item.tags) if item.tags else "no-tags"
+        return f"{content} (type={item.type}, tags={tag_text})"
+
+    def _build_llm_prompt(self, user_text: str) -> str:
+        return (
+            "Use the context packet for grounding. "
+            "Only reference memory when citing evidence ids from the packet. "
+            "If the context is insufficient, ask a clarifying question.\n\n"
+            f"User request: {user_text}"
+        )
+
+    def _safe_llm_call(
+        self,
+        user_text: str,
+        context_packet: ContextPacket,
+        system_prompt: Optional[str] = None,
+    ) -> Optional[str]:
+        try:
+            prompt = self._build_llm_prompt(user_text)
+            return self._call_llm(
+                prompt,
+                system_prompt=system_prompt or self.system_prompt,
+                context_packet=context_packet,
+            )
+        except Exception as exc:
+            logger.error("LLM call failed: %s", exc)
+            return None
+
+    def _delegate_agent(
+        self, agent_name: str, user_text: str, context_packet: ContextPacket
+    ) -> Optional[str]:
+        from agents import load_agent_context
+
+        system_prompt = load_agent_context(agent_name)
+        return self._safe_llm_call(
+            user_text,
+            context_packet=context_packet,
+            system_prompt=system_prompt,
+        )
+
+    def route_request(
+        self, user_text: str, context_packet: Optional[ContextPacket] = None
+    ) -> RoutingDecision:
+        """Route user request to an agent/tool using deterministic rules."""
+        text = user_text.strip()
+        context_ids = context_packet.context_ids if context_packet else []
+        if not text:
+            return RoutingDecision(
+                route="nexus",
+                rationale="Empty request; default to NEXUS.",
+                context_ids=context_ids,
+            )
+
+        tool = self.tool_registry.match(text)
+        if tool:
+            return RoutingDecision(
+                route="tool",
+                rationale=f"Matched tool keywords for {tool.name}.",
+                context_ids=context_ids,
+                tool_name=tool.name,
+            )
+
+        lowered = text.lower()
+        cortex_terms = (
+            "write code",
+            "implement",
+            "build",
+            "fix",
+            "debug",
+            "refactor",
+            "run",
+            "execute",
+            "test",
+            "benchmark",
+        )
+        if any(term in lowered for term in cortex_terms):
+            return RoutingDecision(
+                route="cortex",
+                rationale="Execution-oriented request.",
+                context_ids=context_ids,
+            )
+
+        frontier_terms = (
+            "research",
+            "scout",
+            "monitor",
+            "scan",
+            "trend",
+            "discover",
+            "literature review",
+        )
+        if any(term in lowered for term in frontier_terms):
+            return RoutingDecision(
+                route="frontier",
+                rationale="Research scouting request.",
+                context_ids=context_ids,
+            )
+
+        return RoutingDecision(
+            route="nexus",
+            rationale="General request routed to NEXUS.",
+            context_ids=context_ids,
+        )
 
     def generate_morning_briefing(self) -> str:
         """
@@ -352,24 +562,66 @@ IMPORTANT: Respond with ONLY valid JSON, no other text:
             "briefing_saved": briefing_path,
         }
 
-    def process_message(self, message: str) -> str:
-        """
-        Process a message from Cole.
+    def process_message(self, message: str) -> Response:
+        """Process a user message through the deterministic NEXUS pipeline."""
+        context_packet = self.build_context(message)
+        routing = self.route_request(message, context_packet=context_packet)
+        context_ids = context_packet.context_ids
 
-        Args:
-            message: User message
+        route_label = routing.route
+        citations: list[str] = []
+        response_text: Optional[str] = None
 
-        Returns:
-            Response
-        """
-        # Route to determine handling
-        routing = self.route_request(message)
-
-        if routing["target"] == "NEXUS":
-            return self.answer(message)
+        if routing.route == "tool":
+            tool_name = routing.tool_name or "unknown"
+            route_label = f"tool:{tool_name}"
+            try:
+                result = self.tool_registry.dispatch(tool_name, message)
+                response_text = result.text
+                citations = result.citations
+            except Exception as exc:
+                logger.error("Tool dispatch failed: %s", exc)
+                response_text = (
+                    f"Tool '{tool_name}' failed. "
+                    "Check integration config or try again."
+                )
+        elif routing.route == "cortex":
+            response_text = self._delegate_agent("CORTEX", message, context_packet)
+        elif routing.route == "frontier":
+            response_text = self._delegate_agent("FRONTIER", message, context_packet)
         else:
-            # Delegate to other agent/integration
-            return f"Routing to {routing['target']}: {routing['reasoning']}"
+            response_text = self._safe_llm_call(message, context_packet)
+
+        if response_text is None:
+            response_text = (
+                "LLM unavailable. Start vLLM with: python scripts/start_vllm.py "
+                "and confirm LLM_API_URL is reachable."
+            )
+
+        record_memory(
+            "NEXUS",
+            message,
+            memory_type="crumb",
+            tags=["request", f"route:{route_label}"],
+            importance=0.2,
+            source="user",
+        )
+        if should_store_responses():
+            record_memory(
+                "NEXUS",
+                response_text,
+                memory_type="crumb",
+                tags=["response", f"route:{route_label}"],
+                importance=0.1,
+                source="assistant",
+            )
+
+        return Response(
+            text=response_text,
+            citations=citations,
+            route_used=route_label,
+            context_used=context_ids,
+        )
 
     def _should_use_web_lookup(self, message: str, use_web: Optional[bool]) -> bool:
         if use_web is not None:
