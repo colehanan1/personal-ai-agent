@@ -338,9 +338,16 @@ Wake up to completed analysis, not running scripts.
 - **[Phase 2 Deployment Guide](docs/PHASE2_DEPLOYMENT.md)** - Step-by-step setup instructions
 - **[Phase 2 Completion Report](docs/PHASE2_COMPLETE.md)** - Test results & validation
 - **[System Documentation](docs/SYSTEM_DOCUMENTATION.md)** - Architecture deep-dive
+- **[Orchestrator Quickstart](docs/ORCHESTRATOR_QUICKSTART.md)** - ntfy outputs via Tailscale click-to-open or SMB share
 - **[Implementation Plan](docs/IMPLEMENTATION_PLAN.md)** - Original design decisions
 
 ---
+
+## Click-to-Open Outputs
+
+Use Tailscale Serve + ntfy Click headers so tapping a notification opens the full Milton output on your iPhone. Run `scripts/setup_tailscale_serve_outputs.sh` once and set `OUTPUT_BASE_URL` as described in `docs/ORCHESTRATOR_QUICKSTART.md`.
+
+If you prefer a local-network alternative, configure the SMB share in `docs/ORCHESTRATOR_QUICKSTART.md` and set `OUTPUT_SHARE_URL` instead.
 
 ## Technical Details
 

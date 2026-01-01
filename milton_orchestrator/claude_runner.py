@@ -237,11 +237,13 @@ class ClaudeRunner:
                        f"SKIP_PLAN_APPROVAL={env.get('CLAUDE_CODE_SKIP_PLAN_APPROVAL')}, "
                        f"AUTO_ACCEPT_PLAN={env.get('CLAUDE_CODE_AUTO_ACCEPT_PLAN')}")
 
+            timeout_value = timeout if timeout and timeout > 0 else None
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout,
+                timeout=timeout_value,
                 cwd=str(self.target_repo) if self.target_repo else None,
                 input=stdin_input,
                 env=env,

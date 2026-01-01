@@ -13,6 +13,7 @@ class Config:
 
     # ntfy settings
     ntfy_base_url: str
+    ntfy_max_chars: int
     ask_topic: str
     answer_topic: str
     claude_topic: str
@@ -26,6 +27,7 @@ class Config:
 
     # Claude Code settings
     claude_bin: str
+    claude_timeout: int
     target_repo: Path
 
     # Codex CLI settings
@@ -51,6 +53,16 @@ class Config:
     log_dir: Path
     state_dir: Path
     max_output_size: int
+
+    # Output publishing
+    output_dir: Path
+    output_base_url: Optional[str]
+    output_share_url: Optional[str]
+    output_share_host: Optional[str]
+    output_share_name: Optional[str]
+    ntfy_max_inline_chars: int
+    always_file_attachments: bool
+    output_filename_template: str
 
     # Processing settings
     request_timeout: int
@@ -87,12 +99,21 @@ class Config:
                 return []
             return shlex.split(value)
 
+        def parse_timeout(value: Optional[str], default: int) -> int:
+            if value is None:
+                return default
+            normalized = value.strip().lower()
+            if normalized in {"none", "no", "off"}:
+                return 0
+            return int(normalized)
+
         # ntfy settings
         ntfy_base_url = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
         ask_topic = os.getenv("ASK_TOPIC", "milton-briefing-code-ask")
         answer_topic = os.getenv("ANSWER_TOPIC", "milton-briefing-code")
         claude_topic = os.getenv("CLAUDE_TOPIC", "").strip()
         codex_topic = os.getenv("CODEX_TOPIC", "").strip()
+        ntfy_max_chars = int(os.getenv("NTFY_MAX_CHARS", "160"))
 
         # Perplexity settings
         perplexity_api_key = os.getenv("PERPLEXITY_API_KEY", "")
@@ -117,12 +138,13 @@ class Config:
 
         # Processing settings
         request_timeout = int(os.getenv("REQUEST_TIMEOUT", "600"))
+        claude_timeout = parse_timeout(os.getenv("CLAUDE_TIMEOUT"), 0)
         ntfy_reconnect_backoff_max = int(os.getenv("NTFY_RECONNECT_BACKOFF_MAX", "300"))
 
         # Codex CLI settings
         codex_bin = os.getenv("CODEX_BIN", "codex")
         codex_model = os.getenv("CODEX_MODEL", "gpt-5.2-codex")
-        codex_timeout = int(os.getenv("CODEX_TIMEOUT", str(request_timeout)))
+        codex_timeout = parse_timeout(os.getenv("CODEX_TIMEOUT"), 0)
         codex_extra_args = parse_extra_args(os.getenv("CODEX_EXTRA_ARGS", ""))
         enable_codex_fallback, codex_fallback_on_any_failure = parse_fallback_mode(
             os.getenv("ENABLE_CODEX_FALLBACK")
@@ -161,13 +183,31 @@ class Config:
         log_dir = Path(os.getenv("LOG_DIR", home / ".local/state/milton_orchestrator/logs"))
         state_dir = Path(os.getenv("STATE_DIR", home / ".local/state/milton_orchestrator"))
 
+        output_dir = Path(
+            os.getenv("OUTPUT_DIR", state_dir / "outputs")
+        )
+        output_base_url = os.getenv("OUTPUT_BASE_URL", "").strip() or None
+        output_share_url = os.getenv("OUTPUT_SHARE_URL", "").strip() or None
+        output_share_host = os.getenv("OUTPUT_SHARE_HOST", "").strip() or None
+        output_share_name = os.getenv("OUTPUT_SHARE_NAME", "").strip() or None
+        ntfy_max_inline_chars = int(os.getenv("NTFY_MAX_INLINE_CHARS", "3000"))
+        always_file_attachments = parse_bool(
+            os.getenv("ALWAYS_FILE_ATTACHMENTS"), False
+        )
+        output_filename_template = os.getenv(
+            "OUTPUT_FILENAME_TEMPLATE", "milton_{request_id}.txt"
+        )
+
         log_dir.mkdir(parents=True, exist_ok=True)
         state_dir.mkdir(parents=True, exist_ok=True)
 
         max_output_size = int(os.getenv("MAX_OUTPUT_SIZE", "4000"))
 
+        output_dir.mkdir(parents=True, exist_ok=True)
+
         return cls(
             ntfy_base_url=ntfy_base_url,
+            ntfy_max_chars=ntfy_max_chars,
             ask_topic=ask_topic,
             answer_topic=answer_topic,
             claude_topic=claude_topic,
@@ -177,6 +217,7 @@ class Config:
             perplexity_timeout=perplexity_timeout,
             perplexity_max_retries=perplexity_max_retries,
             claude_bin=claude_bin,
+            claude_timeout=claude_timeout,
             target_repo=target_repo_path,
             codex_bin=codex_bin,
             codex_model=codex_model,
@@ -196,6 +237,14 @@ class Config:
             log_dir=log_dir,
             state_dir=state_dir,
             max_output_size=max_output_size,
+            output_dir=output_dir,
+            output_base_url=output_base_url,
+            output_share_url=output_share_url,
+            output_share_host=output_share_host,
+            output_share_name=output_share_name,
+            ntfy_max_inline_chars=ntfy_max_inline_chars,
+            always_file_attachments=always_file_attachments,
+            output_filename_template=output_filename_template,
             request_timeout=request_timeout,
             ntfy_reconnect_backoff_max=ntfy_reconnect_backoff_max,
         )
@@ -207,3 +256,26 @@ class Config:
 
         if not self.ask_topic or not self.answer_topic:
             raise ValueError("Both ASK_TOPIC and ANSWER_TOPIC must be set")
+
+        if self.ntfy_max_chars <= 0:
+            raise ValueError("NTFY_MAX_CHARS must be > 0")
+
+        if self.ntfy_max_inline_chars <= 0:
+            raise ValueError("NTFY_MAX_INLINE_CHARS must be > 0")
+
+        if self.output_base_url and not self.output_base_url.startswith("http"):
+            raise ValueError(f"Invalid OUTPUT_BASE_URL: {self.output_base_url}")
+
+        if bool(self.output_share_host) ^ bool(self.output_share_name):
+            raise ValueError(
+                "OUTPUT_SHARE_HOST and OUTPUT_SHARE_NAME must be set together"
+            )
+
+        if not self.output_filename_template.strip():
+            raise ValueError("OUTPUT_FILENAME_TEMPLATE must be non-empty")
+
+        if self.claude_timeout < 0:
+            raise ValueError("CLAUDE_TIMEOUT must be >= 0 (0 means no timeout)")
+
+        if self.codex_timeout < 0:
+            raise ValueError("CODEX_TIMEOUT must be >= 0 (0 means no timeout)")

@@ -66,12 +66,14 @@ class CodexRunner:
         model: Optional[str] = None,
         extra_args: Optional[list[str]] = None,
         state_dir: Optional[Path] = None,
+        output_dir: Optional[Path] = None,
     ):
         self.codex_bin = codex_bin
         self.target_repo = target_repo
         self.model = model
         self.extra_args = extra_args or []
         self.state_dir = state_dir
+        self.output_dir = output_dir
         self._capabilities = None
         self._prompt_flag: Optional[str] = None
         self._path_flag: Optional[str] = None
@@ -396,11 +398,13 @@ class CodexRunner:
         logger.debug(f"Working directory: {self.target_repo}")
 
         try:
+            timeout_value = timeout if timeout and timeout > 0 else None
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout,
+                timeout=timeout_value,
                 cwd=str(self.target_repo) if self.target_repo else None,
                 input=stdin_input,
             )
@@ -447,13 +451,18 @@ class CodexRunner:
         """
         Save full Codex CLI output to a file.
         """
-        if not self.state_dir:
-            logger.warning("State directory not configured; skipping Codex output save")
+        if not self.state_dir and not self.output_dir:
+            logger.warning(
+                "State/output directory not configured; skipping Codex output save"
+            )
             return None
 
         import datetime
 
-        output_dir = self.state_dir / "outputs"
+        if self.output_dir:
+            output_dir = self.output_dir
+        else:
+            output_dir = self.state_dir / "outputs"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")

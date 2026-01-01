@@ -235,7 +235,8 @@ Topic routing takes priority over prefixes.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `CLAUDE_BIN` | Path to Claude binary | `claude` |
-| `REQUEST_TIMEOUT` | Max execution time (seconds) | `600` |
+| `CLAUDE_TIMEOUT` | Claude execution timeout in seconds (`0` = no timeout) | `0` |
+| `REQUEST_TIMEOUT` | Legacy default timeout in seconds | `600` |
 
 ### Codex CLI Configuration
 
@@ -243,7 +244,7 @@ Topic routing takes priority over prefixes.
 |----------|-------------|---------|
 | `CODEX_BIN` | Path to Codex binary | `codex` |
 | `CODEX_MODEL` | Codex model override (`default` to use CLI default) | `gpt-5.2-codex` |
-| `CODEX_TIMEOUT` | Max Codex execution time (seconds) | `REQUEST_TIMEOUT` |
+| `CODEX_TIMEOUT` | Codex execution timeout in seconds (`0` = no timeout) | `0` |
 | `CODEX_EXTRA_ARGS` | Extra Codex CLI flags (quoted string) | *(empty)* |
 | `ENABLE_CODEX_FALLBACK` | Enable Codex fallback (`always` = any Claude failure) | `true` |
 | `CLAUDE_FALLBACK_ON_LIMIT` | Fallback only on usage/rate limits | `true` |

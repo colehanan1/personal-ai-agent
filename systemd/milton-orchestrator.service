@@ -1,0 +1,22 @@
+[Unit]
+Description=Milton Orchestrator - Voice-to-Code System
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cole-hanan/milton
+EnvironmentFile=/home/cole-hanan/milton/.env
+Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
+ExecStart=/home/cole-hanan/miniconda3/envs/milton/bin/milton-orchestrator
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

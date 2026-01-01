@@ -76,7 +76,14 @@ class NtfyClient:
             logger.error(f"ntfy subscription error: {e}")
             raise
 
-    def publish(self, topic: str, message: str, title: Optional[str] = None, priority: int = 3) -> bool:
+    def publish(
+        self,
+        topic: str,
+        message: str,
+        title: Optional[str] = None,
+        priority: int = 3,
+        click_url: Optional[str] = None,
+    ) -> bool:
         """
         Publish a message to a topic.
 
@@ -85,6 +92,7 @@ class NtfyClient:
             message: The message body
             title: Optional message title
             priority: Message priority (1-5, default 3)
+            click_url: Optional Click URL to open on tap
 
         Returns:
             True if successful, False otherwise
@@ -96,6 +104,8 @@ class NtfyClient:
         }
         if title:
             headers["Title"] = title
+        if click_url:
+            headers["Click"] = click_url
 
         try:
             response = self.session.post(

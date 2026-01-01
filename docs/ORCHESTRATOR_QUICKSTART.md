@@ -15,7 +15,7 @@ A complete voice-to-code system that:
 ```bash
 cd /home/cole-hanan/milton
 
-# Run installation script (creates venv, installs deps)
+# Run installation script (uses conda env, installs deps)
 ./scripts/install.sh
 ```
 
@@ -61,8 +61,8 @@ codex --help
 ### 3. Test the Installation
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
+# Activate conda environment
+conda activate milton
 
 # Run tests
 pytest
@@ -174,12 +174,51 @@ tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
 
 ### Check Outputs
 
-Full Claude Code outputs are saved to:
+Full outputs are saved to `OUTPUT_DIR` (default shown below):
 ```bash
 ls -lah ~/.local/state/milton_orchestrator/outputs/
 ```
 
 Codex outputs (plan + execute) are stored in the same directory with `codex_*.txt` filenames.
+
+### Click-to-Open Outputs (ntfy + Tailscale)
+
+**One-time setup:**
+```bash
+scripts/setup_tailscale_serve_outputs.sh
+```
+
+1) Copy your `https://<node>.<tailnet>.ts.net` URL from the status output.  
+2) Set `OUTPUT_BASE_URL` in `.env` (no trailing slash).  
+3) Optional: set `OUTPUT_DIR` if you want a custom folder.  
+4) Keep this tailnet-only (do not enable Funnel).
+
+**iPhone steps:**
+1) Install Tailscale and connect to your tailnet.  
+2) Ensure ntfy notifications are enabled.  
+3) Tap the notification to open the full output in Safari.
+
+### SMB Shared Folder (Local Network Alternative)
+
+If Tailscale click-to-open isn't working, you can share outputs over SMB and open them
+from the iPhone Files app.
+
+**One-time setup:**
+```bash
+scripts/setup_samba_share.sh
+```
+
+1) Add the Samba share stanza printed by the script to `/etc/samba/smb.conf`.  
+2) Set an SMB password (`sudo smbpasswd -a $USER`).  
+3) Restart Samba (`sudo systemctl restart smbd`).  
+4) Set `.env`:
+   - `OUTPUT_DIR=/home/cole-hanan/milton/shared_outputs`
+   - `OUTPUT_SHARE_URL=smb://<host>/<share>`
+
+**iPhone steps:**
+1) Open Files app → `...` → Connect to Server.  
+2) Enter `smb://<host>/<share>` and sign in with your user.  
+3) Open the filename mentioned in the ntfy notification.
 
 ### Service Status
 
@@ -232,6 +271,13 @@ which claude
 
 # Or set custom path in .env
 CLAUDE_BIN=/path/to/claude
+```
+
+### Claude Code timing out
+
+Disable the Claude timeout (0 = no timeout):
+```bash
+CLAUDE_TIMEOUT=0
 ```
 
 ### Codex fallback not working

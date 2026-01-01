@@ -15,6 +15,7 @@ from milton_orchestrator.codex_runner import CodexRunResult
 def config(tmp_path: Path) -> Config:
     return Config(
         ntfy_base_url="https://ntfy.sh",
+        ntfy_max_chars=160,
         ask_topic="ask-topic",
         answer_topic="answer-topic",
         claude_topic="",
@@ -24,6 +25,7 @@ def config(tmp_path: Path) -> Config:
         perplexity_timeout=30,
         perplexity_max_retries=1,
         claude_bin="claude",
+        claude_timeout=0,
         target_repo=tmp_path,
         codex_bin="codex",
         codex_model="default",
@@ -43,6 +45,14 @@ def config(tmp_path: Path) -> Config:
         log_dir=tmp_path / "logs",
         state_dir=tmp_path / "state",
         max_output_size=4000,
+        output_dir=tmp_path / "outputs",
+        output_base_url=None,
+        output_share_url=None,
+        output_share_host=None,
+        output_share_name=None,
+        ntfy_max_inline_chars=3000,
+        always_file_attachments=False,
+        output_filename_template="milton_{request_id}.txt",
         request_timeout=300,
         ntfy_reconnect_backoff_max=120,
     )
@@ -51,6 +61,7 @@ def config(tmp_path: Path) -> Config:
 def setup_orchestrator(config: Config) -> Orchestrator:
     orchestrator = Orchestrator(config, dry_run=False)
     orchestrator.publish_status = MagicMock()
+    orchestrator.ntfy_client = MagicMock()
     orchestrator.perplexity_client = MagicMock()
     orchestrator.perplexity_client.research_and_optimize.return_value = "notes"
     return orchestrator

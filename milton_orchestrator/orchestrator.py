@@ -12,6 +12,8 @@ from typing import Optional, Set
 
 from .config import Config
 from .ntfy_client import NtfyClient, subscribe_topics_with_reconnect
+from .ntfy_summarizer import truncate_text
+from .output_publisher import publish_response
 from .perplexity_client import PerplexityClient, fallback_prompt_optimizer
 from .prompt_builder import ClaudePromptBuilder
 from .claude_runner import ClaudeRunner, is_usage_limit_error
@@ -78,6 +80,7 @@ class Orchestrator:
             model=config.codex_model,
             extra_args=config.codex_extra_args,
             state_dir=config.state_dir,
+            output_dir=config.output_dir,
         )
         self.reminder_store = None
         self.reminder_scheduler = None
@@ -86,7 +89,9 @@ class Orchestrator:
             self.reminder_scheduler = ReminderScheduler(
                 store=self.reminder_store,
                 publish_fn=lambda msg: self.ntfy_client.publish(
-                    self.config.answer_topic, msg, title="Reminder"
+                    self.config.answer_topic,
+                    truncate_text(msg, max_chars=self.config.ntfy_max_chars),
+                    title="Reminder",
                 ),
                 interval_seconds=5,
             )
@@ -110,6 +115,7 @@ class Orchestrator:
 
     def publish_status(self, message: str, title: Optional[str] = None):
         """Publish status update to answer topic"""
+        message = truncate_text(message, max_chars=self.config.ntfy_max_chars)
         logger.info(f"Publishing status: {title or message[:50]}")
         self.ntfy_client.publish(
             self.config.answer_topic,
@@ -186,27 +192,22 @@ class Orchestrator:
 
             result = self.claude_runner.run(
                 prompt=claude_prompt,
-                timeout=self.config.request_timeout,
+                timeout=self.config.claude_timeout,
                 dry_run=self.dry_run,
             )
 
             # Step 5: Save full output
             output_file = self.claude_runner.save_output(
                 result,
-                self.config.state_dir / "outputs",
+                self.config.output_dir,
             )
 
             if result.success:
-                status_emoji = "✅"
-                summary = result.get_summary(self.config.max_output_size)
-                final_message = (
-                    f"{status_emoji} [{request_id}] Claude Code finished\n\n"
-                    f"{summary}\n\n"
-                    f"Full output: {output_file}"
-                )
-                self.publish_status(
-                    final_message,
-                    title=f"Success: {request_id}",
+                self._publish_final_output(
+                    request_id=request_id,
+                    tool_name="Claude Code",
+                    result=result,
+                    output_file=output_file,
                 )
                 logger.info(f"Request {request_id} completed successfully")
                 return
@@ -222,16 +223,11 @@ class Orchestrator:
                 )
                 return
 
-            status_emoji = "❌"
-            summary = result.get_summary(self.config.max_output_size)
-            final_message = (
-                f"{status_emoji} [{request_id}] Claude Code failed\n\n"
-                f"{summary}\n\n"
-                f"Full output: {output_file}"
-            )
-            self.publish_status(
-                final_message,
-                title=f"Failed: {request_id}",
+            self._publish_final_output(
+                request_id=request_id,
+                tool_name="Claude Code",
+                result=result,
+                output_file=output_file,
             )
 
         except Exception as e:
@@ -298,25 +294,16 @@ class Orchestrator:
             plan_output = self.codex_runner.last_plan_output_file
             execute_output = self.codex_runner.last_execute_output_file
 
-            status_emoji = "✅" if result.success else "❌"
-            summary = result.get_summary(self.config.max_output_size)
+            note = None
+            if plan_output and not execute_output:
+                note = "Execute output: (not run)"
 
-            lines = [
-                f"{status_emoji} [{request_id}] Codex finished",
-                "",
-                summary,
-            ]
-
-            if plan_output:
-                lines.extend(["", f"Plan output: {plan_output}"])
-            if execute_output:
-                lines.extend(["", f"Execute output: {execute_output}"])
-            elif plan_output and not execute_output:
-                lines.extend(["", "Execute output: (not run)"])
-
-            self.publish_status(
-                "\n".join(lines),
-                title=f"{'Success' if result.success else 'Failed'}: {request_id}",
+            self._publish_final_output(
+                request_id=request_id,
+                tool_name="Codex",
+                result=result,
+                output_file=execute_output or plan_output,
+                note=note,
             )
 
         except Exception as e:
@@ -366,27 +353,16 @@ class Orchestrator:
         plan_output = self.codex_runner.last_plan_output_file
         execute_output = self.codex_runner.last_execute_output_file
 
-        status_emoji = "✅" if result.success else "❌"
-        summary = result.get_summary(self.config.max_output_size)
+        note = None
+        if plan_output and not execute_output:
+            note = "Execute output: (not run)"
 
-        lines = [
-            f"{status_emoji} [{request_id}] Codex finished",
-            "",
-            summary,
-        ]
-
-        if claude_output_file:
-            lines.extend(["", f"Claude output: {claude_output_file}"])
-        if plan_output:
-            lines.extend(["", f"Plan output: {plan_output}"])
-        if execute_output:
-            lines.extend(["", f"Execute output: {execute_output}"])
-        elif plan_output and not execute_output:
-            lines.extend(["", "Execute output: (not run)"])
-
-        self.publish_status(
-            "\n".join(lines),
-            title=f"{'Success' if result.success else 'Failed'}: {request_id}",
+        self._publish_final_output(
+            request_id=request_id,
+            tool_name="Codex (fallback)",
+            result=result,
+            output_file=execute_output or plan_output,
+            note=note,
         )
 
     def process_chat_request(self, request_id: str, content: str):
@@ -466,6 +442,44 @@ class Orchestrator:
             lines.extend(["", "SOURCES:", *sources])
         return "\n".join(lines)
 
+    def _publish_final_output(
+        self,
+        request_id: str,
+        tool_name: str,
+        result,
+        output_file: Optional[Path] = None,
+        note: Optional[str] = None,
+    ) -> None:
+        full_text = self._load_output_text(output_file, result)
+        if note:
+            full_text = f"{note}\n\n{full_text}" if full_text else note
+        title = self._output_title(request_id, tool_name, result.success)
+        publish_response(
+            self.ntfy_client,
+            self.config.answer_topic,
+            title,
+            full_text,
+            request_id,
+            self.config,
+        )
+
+    @staticmethod
+    def _load_output_text(output_file: Optional[Path], result) -> str:
+        if output_file:
+            try:
+                return output_file.read_text()
+            except OSError as exc:
+                logger.warning(f"Failed to read output file {output_file}: {exc}")
+
+        stdout = getattr(result, "stdout", "")
+        stderr = getattr(result, "stderr", "")
+        return "\n".join(part for part in (stdout, stderr) if part).strip()
+
+    @staticmethod
+    def _output_title(request_id: str, tool_name: str, success: bool) -> str:
+        status = "ready" if success else "failed"
+        return f"{tool_name} output {status} ({request_id})"
+
     def route_message(self, topic: str, message: str) -> tuple[str, str, Optional[str]]:
         text = message.lstrip()
 
@@ -528,20 +542,16 @@ class Orchestrator:
                     title="Research Error",
                 )
                 return
-            message = self._format_research_response(request_id, research_notes)
-            if len(message) > self.config.max_output_size:
-                output_dir = self.config.state_dir / "outputs"
-                output_dir.mkdir(parents=True, exist_ok=True)
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file = output_dir / f"research_{timestamp}.txt"
-                output_file.write_text(message)
-                message = (
-                    f"✅ [{request_id}] Research complete\n\n"
-                    f"{message[:self.config.max_output_size]}\n\n"
-                    f"... (truncated)\n\n"
-                    f"Full results: {output_file}"
-                )
-            self.publish_status(message, title="Research Complete")
+            full_text = self._format_research_response(request_id, research_notes)
+            title = self._output_title(request_id, "Research", success=True)
+            publish_response(
+                self.ntfy_client,
+                self.config.answer_topic,
+                title,
+                full_text,
+                request_id,
+                self.config,
+            )
         elif mode == "REMINDER":
             if not reminder_kind:
                 reminder_kind = "REMIND"
@@ -590,23 +600,15 @@ class Orchestrator:
 
             # Publish research results
             formatted = self._format_research_response(request_id, research_notes)
-            if len(formatted) > self.config.max_output_size:
-                # Save to file
-                output_dir = self.config.state_dir / "outputs"
-                output_dir.mkdir(parents=True, exist_ok=True)
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file = output_dir / f"research_{timestamp}.txt"
-                output_file.write_text(formatted)
-
-                message = (
-                    f"{formatted[:self.config.max_output_size]}\n\n"
-                    f"... (truncated)\n\n"
-                    f"Full results: {output_file}"
-                )
-            else:
-                message = formatted
-
-            self.publish_status(message, title="Research Complete")
+            title = self._output_title(request_id, "Research", success=True)
+            publish_response(
+                self.ntfy_client,
+                self.config.answer_topic,
+                title,
+                formatted,
+                request_id,
+                self.config,
+            )
             logger.info(f"Research request {request_id} completed")
 
         except Exception as e:

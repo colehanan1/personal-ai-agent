@@ -225,7 +225,9 @@ tests/test_ntfy_parsing.py ...........                                    [100%]
 - `ANSWER_TOPIC` - Response topic (default: milton-briefing-code)
 - `PERPLEXITY_MODEL` - Model name (default: sonar-pro)
 - `CLAUDE_BIN` - Claude binary (default: claude)
-- `REQUEST_TIMEOUT` - Max execution time (default: 600s)
+- `CLAUDE_TIMEOUT` - Claude timeout (0 = no timeout, default: 0)
+- `REQUEST_TIMEOUT` - Legacy default timeout (default: 600s)
+- `CODEX_TIMEOUT` - Codex timeout (0 = no timeout, default: 0)
 - `MAX_OUTPUT_SIZE` - Output truncation (default: 4000 chars)
 
 See [.env.example](../.env.example) for all options.

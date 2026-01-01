@@ -132,6 +132,7 @@ All Claude Code settings from `.env`:
 ```bash
 # Core settings
 CLAUDE_BIN=/home/cole-hanan/.vscode/extensions/anthropic.claude-code-2.0.75-linux-x64/resources/native-binary/claude
+CLAUDE_TIMEOUT=0
 REQUEST_TIMEOUT=600
 
 # Auto-approval for automated execution

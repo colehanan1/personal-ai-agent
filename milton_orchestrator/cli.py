@@ -30,6 +30,15 @@ Environment Variables:
   PERPLEXITY_API_KEY     Perplexity API key (required)
   TARGET_REPO            Path to target repository (required)
   NTFY_BASE_URL          ntfy server URL (default: https://ntfy.sh)
+  NTFY_MAX_CHARS         Max chars for short status messages (default: 160)
+  NTFY_MAX_INLINE_CHARS  Max chars before switching to file output (default: 3000)
+  OUTPUT_DIR             Directory for saved outputs (default: ~/.local/state/milton_orchestrator/outputs)
+  OUTPUT_BASE_URL        Base URL for Click-to-open output (optional)
+  OUTPUT_SHARE_URL       SMB share URL for output files (e.g. smb://host/share)
+  OUTPUT_SHARE_HOST      SMB share host (used with OUTPUT_SHARE_NAME)
+  OUTPUT_SHARE_NAME      SMB share name (used with OUTPUT_SHARE_HOST)
+  OUTPUT_FILENAME_TEMPLATE  Output filename template (default: milton_{request_id}.txt)
+  ALWAYS_FILE_ATTACHMENTS  Always save to file + Click URL (default: false)
   ASK_TOPIC              Topic for incoming requests (default: milton-briefing-code-ask)
   ANSWER_TOPIC           Topic for responses (default: milton-briefing-code)
   CLAUDE_TOPIC           Topic for Claude code requests (default: empty)
@@ -44,9 +53,10 @@ Environment Variables:
   PERPLEXITY_IN_RESEARCH_MODE Use Perplexity in RESEARCH mode (default: true)
   PERPLEXITY_MODEL       Perplexity model (default: sonar-pro)
   CLAUDE_BIN             Claude Code binary path (default: claude)
+  CLAUDE_TIMEOUT         Claude timeout seconds (0 = no timeout, default: 0)
   CODEX_BIN              Codex CLI binary path (default: codex)
   CODEX_MODEL            Codex model override (default: gpt-5.2-codex)
-  CODEX_TIMEOUT          Codex timeout seconds (default: REQUEST_TIMEOUT)
+  CODEX_TIMEOUT          Codex timeout seconds (0 = no timeout, default: 0)
   ENABLE_CODEX_FALLBACK  Enable Claude-to-Codex fallback (default: true)
   CLAUDE_FALLBACK_ON_LIMIT  Fallback only on usage/rate limits (default: true)
   CODEX_EXTRA_ARGS       Extra Codex CLI flags (quoted string)
@@ -108,6 +118,15 @@ Message Formats:
     logger.info(f"Claude Binary: {config.claude_bin}")
     logger.info(f"Codex Binary: {config.codex_bin}")
     logger.info(f"Codex Model: {config.codex_model}")
+    logger.info(f"Output Dir: {config.output_dir}")
+    logger.info(f"Output Base URL: {config.output_base_url or '(not set)'}")
+    share_hint = "(not set)"
+    if config.output_share_url:
+        share_hint = config.output_share_url
+    elif config.output_share_host and config.output_share_name:
+        share_hint = f"smb://{config.output_share_host}/{config.output_share_name}"
+    logger.info(f"Output SMB Share: {share_hint}")
+    logger.info(f"NTFY Max Inline Chars: {config.ntfy_max_inline_chars}")
     logger.info(
         f"Codex Fallback: enabled={config.enable_codex_fallback}, "
         f"any_failure={config.codex_fallback_on_any_failure}, "

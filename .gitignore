@@ -33,6 +33,7 @@ credentials.json
 # Runtime outputs
 /inbox/
 /outputs/
+/shared_outputs/
 /memory/short-term/
 /memory/working/
 /memory/long-term/
