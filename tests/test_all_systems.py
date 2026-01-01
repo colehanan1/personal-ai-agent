@@ -358,7 +358,7 @@ def test_logging() -> bool:
 
         logger.info("Test log entry")
 
-        log_dir = os.path.expanduser("~/agent-system/logs/test_agent")
+        log_dir = os.path.expanduser("~/milton/logs/test_agent")
 
         if os.path.exists(log_dir):
             print_test("Logging System", "pass", f"Log directory: {log_dir}")

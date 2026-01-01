@@ -37,6 +37,7 @@ credentials.json
 /memory/short-term/
 /memory/working/
 /memory/long-term/
+/data/memory/
 
 # Job queue
 /job_queue/*.db

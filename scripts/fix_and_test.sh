@@ -5,7 +5,7 @@ echo "=== FIXING KNOWN ISSUES ==="
 
 # 1. Create log directory
 echo "Creating log directory..."
-mkdir -p ~/agent-system/logs
+mkdir -p ~/milton/logs
 echo "✓ Log directory created"
 
 # 2. Check .env file has required keys

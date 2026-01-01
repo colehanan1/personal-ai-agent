@@ -82,7 +82,7 @@ Total: 6/6 tests passed
 ## Key Fixes Applied
 
 ### Issue 1: Wrong Model Path
-**Problem**: `start_vllm.py` pointed to `~/agent-system/models/llama-405b` (doesn't exist)
+**Problem**: `start_vllm.py` pointed to `~/milton/models/llama-405b` (doesn't exist)
 **Solution**: Changed to `~/milton/models/Llama-3.1-8B-Instruct-HF`
 **Result**: ✅ vLLM starts successfully with correct 8B model
 

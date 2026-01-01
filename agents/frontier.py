@@ -286,7 +286,7 @@ Provide a 2-3 sentence overview of the main trends and breakthroughs.
 
         # Save to outputs
         output_path = os.path.expanduser(
-            f"~/agent-system/outputs/research_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            f"~/milton/outputs/research_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         )
 
         try:

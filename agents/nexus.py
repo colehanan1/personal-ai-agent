@@ -336,7 +336,7 @@ IMPORTANT: Respond with ONLY valid JSON, no other text:
 
         # Save briefing to inbox
         briefing_path = os.path.expanduser(
-            f"~/agent-system/inbox/evening/briefing_{datetime.now().strftime('%Y%m%d')}.txt"
+            f"~/milton/inbox/evening/briefing_{datetime.now().strftime('%Y%m%d')}.txt"
         )
 
         try:

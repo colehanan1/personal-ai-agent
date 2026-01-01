@@ -110,6 +110,21 @@ python scripts/start_vllm.py
 # Wait 30-60 seconds for model to load
 ```
 
+### Quickstart (dev_up)
+
+```bash
+conda activate milton
+./scripts/dev_up.sh
+python scripts/healthcheck.py
+python scripts/nexus_morning.py
+```
+
+To shut services down:
+
+```bash
+./scripts/dev_down.sh
+```
+
 ### Verify Installation
 
 ```bash
@@ -127,6 +142,12 @@ python tests/test_phase2.py
 # Total: 6/6 tests passed
 ```
 
+### Smoke Test (CI)
+
+```bash
+pytest -q
+```
+
 ### Generate Your First Morning Briefing
 
 ```bash
@@ -136,6 +157,13 @@ python scripts/nexus_morning.py
 # Check output
 cat inbox/morning/brief_*.json | jq '.brief'
 ```
+
+### Troubleshooting
+
+- `scripts/dev_up.sh` fails on `.env`: run `cp .env.example .env` and fill required keys.
+- vLLM not reachable: confirm `python scripts/start_vllm.py` runs and `LLM_API_URL` points to it.
+- Weaviate down: run `docker compose up -d` and check `WEAVIATE_URL`.
+- Healthcheck failures: run `python scripts/healthcheck.py` for exact status.
 
 ---
 
@@ -338,6 +366,7 @@ Wake up to completed analysis, not running scripts.
 - **[Phase 2 Deployment Guide](docs/PHASE2_DEPLOYMENT.md)** - Step-by-step setup instructions
 - **[Phase 2 Completion Report](docs/PHASE2_COMPLETE.md)** - Test results & validation
 - **[System Documentation](docs/SYSTEM_DOCUMENTATION.md)** - Architecture deep-dive
+- **[Memory Spec](docs/MEMORY_SPEC.md)** - Deterministic memory storage + retrieval rules
 - **[Orchestrator Quickstart](docs/ORCHESTRATOR_QUICKSTART.md)** - ntfy outputs via Tailscale click-to-open or SMB share
 - **[Implementation Plan](docs/IMPLEMENTATION_PLAN.md)** - Original design decisions
 
