@@ -5,6 +5,7 @@ import pytest
 
 from milton_orchestrator.config import Config
 from milton_orchestrator import orchestrator as orchestrator_module
+from memory.schema import MemoryItem
 from milton_orchestrator.orchestrator import Orchestrator
 
 
@@ -69,7 +70,10 @@ def test_request_memory_captured_once(config, monkeypatch):
         calls.append((item, repo_root))
         return item.id
 
-    monkeypatch.setattr(orchestrator_module, "add_memory", fake_add_memory)
+    def fake_get_memory_modules():
+        return MemoryItem, fake_add_memory
+
+    monkeypatch.setattr(orchestrator_module, "_get_memory_modules", fake_get_memory_modules)
     monkeypatch.setenv("MILTON_MEMORY_ENABLED", "true")
 
     orchestrator.process_incoming_message("msg-1", config.ask_topic, "hello there")

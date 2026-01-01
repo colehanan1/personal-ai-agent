@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import sys
 import time
 from collections import deque
 from pathlib import Path
@@ -25,8 +26,6 @@ from .reminders import (
     format_timestamp_local,
     parse_reminder_command,
 )
-from memory.schema import MemoryItem
-from memory.store import add_memory
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +146,12 @@ class Orchestrator:
         tags = ["source:ntfy"]
         if mode_tag:
             tags.append(mode_tag)
+
+        try:
+            MemoryItem, add_memory = _get_memory_modules()
+        except Exception as exc:
+            logger.warning("Failed to load memory modules: %s", exc)
+            return
 
         memory_item = MemoryItem(
             agent="orchestrator",
@@ -852,6 +857,27 @@ def _normalize_message_text(message: str) -> str:
     text = re.sub(r"^provided input\s*[:\-]\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^\[[^\]]+\]\s*[:\-]\s*", "", text)
     return text.strip()
+
+
+_MEMORY_CACHE = None
+
+
+def _get_memory_modules():
+    global _MEMORY_CACHE
+    if _MEMORY_CACHE is not None:
+        return _MEMORY_CACHE
+    try:
+        from memory.schema import MemoryItem
+        from memory.store import add_memory
+    except ModuleNotFoundError:
+        repo_root = Path(__file__).resolve().parents[1]
+        repo_str = str(repo_root)
+        if repo_str not in sys.path:
+            sys.path.insert(0, repo_str)
+        from memory.schema import MemoryItem
+        from memory.store import add_memory
+    _MEMORY_CACHE = (MemoryItem, add_memory)
+    return _MEMORY_CACHE
 
 
 def _mode_tag(mode: str, reminder_kind: Optional[str]) -> Optional[str]:

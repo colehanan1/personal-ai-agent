@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from pathlib import Path
 from typing import Optional
 
 from .config import Config
 from .ntfy_summarizer import truncate_text
-
-from memory.schema import MemoryItem
-from memory.store import add_memory
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +293,12 @@ def _record_result_memory(
     repo_root: Path,
     max_chars: int,
 ) -> None:
+    try:
+        MemoryItem, add_memory = _get_memory_modules()
+    except Exception as exc:
+        logger.warning("Failed to load memory modules: %s", exc)
+        return
+
     if not content.strip():
         content = "No output produced."
 
@@ -317,3 +321,24 @@ def _record_result_memory(
         add_memory(memory_item, repo_root=repo_root)
     except Exception as exc:
         logger.warning("Failed to record result memory: %s", exc)
+
+
+_MEMORY_CACHE = None
+
+
+def _get_memory_modules():
+    global _MEMORY_CACHE
+    if _MEMORY_CACHE is not None:
+        return _MEMORY_CACHE
+    try:
+        from memory.schema import MemoryItem
+        from memory.store import add_memory
+    except ModuleNotFoundError:
+        repo_root = Path(__file__).resolve().parents[1]
+        repo_str = str(repo_root)
+        if repo_str not in sys.path:
+            sys.path.insert(0, repo_str)
+        from memory.schema import MemoryItem
+        from memory.store import add_memory
+    _MEMORY_CACHE = (MemoryItem, add_memory)
+    return _MEMORY_CACHE

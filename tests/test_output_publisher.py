@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 from milton_orchestrator.config import Config
 from milton_orchestrator import output_publisher
+from memory.schema import MemoryItem
 from milton_orchestrator.output_publisher import (
     build_output_url,
     build_share_url,
@@ -219,7 +220,10 @@ def test_result_memory_capture_once(tmp_path: Path, monkeypatch):
         calls.append((item, repo_root))
         return item.id
 
-    monkeypatch.setattr(output_publisher, "add_memory", fake_add_memory)
+    def fake_get_memory_modules():
+        return MemoryItem, fake_add_memory
+
+    monkeypatch.setattr(output_publisher, "_get_memory_modules", fake_get_memory_modules)
 
     full_text = "x" * 80
     publish_response(
@@ -255,7 +259,10 @@ def test_long_output_records_click_evidence(tmp_path: Path, monkeypatch):
         captured.append(item)
         return item.id
 
-    monkeypatch.setattr(output_publisher, "add_memory", fake_add_memory)
+    def fake_get_memory_modules():
+        return MemoryItem, fake_add_memory
+
+    monkeypatch.setattr(output_publisher, "_get_memory_modules", fake_get_memory_modules)
 
     publish_response(
         ntfy_client,
