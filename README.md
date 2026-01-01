@@ -12,7 +12,7 @@
 
 ## What is Milton?
 
-Milton is a **local-first AI agent system** that runs entirely on your hardware. Unlike ChatGPT or Claude, your data never leaves your machine, your conversations are remembered forever, and every output is reproducible.
+Milton is a **local-first AI agent system** that runs entirely on your hardware and **continuously improves** by learning from your conversations. Unlike ChatGPT or Claude, your data never leaves your machine, your conversations are remembered forever, every output is reproducible, and the AI gets smarter every week.
 
 **Built for researchers who need:**
 - 🔒 **Privacy** - HIPAA/GDPR compliant by design (zero cloud dependency)
@@ -20,6 +20,7 @@ Milton is a **local-first AI agent system** that runs entirely on your hardware.
 - 📊 **Reproducibility** - Every output includes git hash, versions, random seed
 - ⏰ **Automation** - Queue jobs at night, get results in the morning
 - 💰 **Cost Control** - No per-token pricing, no rate limits
+- 🚀 **Self-Improving** - Continuous learning via three-prong strategy (see [Vision](docs/01-vision.md))
 
 ---
 
@@ -340,29 +341,36 @@ Wake up to completed analysis, not running scripts.
 
 ### 🚧 Phase 3 (Q1 2026 - In Planning)
 
-**Priority 1: Memory Compression & Learning**
-- [ ] Daily short-term → working memory compression
-- [ ] Weekly working → long-term compression
-- [ ] Importance scoring (auto-prune low-value memories)
-- [ ] 30-day learning curve validation
+**NEW: Three-Prong Self-Improvement Strategy** 🚀
 
-**Priority 2: Edge Deployment**
-- [ ] Quantize Llama-3.1-8B to 4-bit (GGUF)
-- [ ] Raspberry Pi 5 support (6GB RAM target)
+Milton will continuously evolve through a three-prong approach:
+
+1. **Memory System** (Prong 1) - Enhanced semantic search and context injection
+   - [ ] Vector embeddings for conversations
+   - [ ] Automated importance scoring
+   - [ ] Context-aware response generation
+   - [ ] Daily short-term → working memory compression
+   - [ ] Weekly working → long-term compression
+
+2. **Continuous Training** (Prong 2) - Weekly LoRA fine-tuning on your conversations
+   - [ ] LoRA training pipeline (PEFT)
+   - [ ] Automated daily/weekly retraining scheduler
+   - [ ] Quality validation and rollback
+   - [ ] Personalized model adapters
+
+3. **Model Evolution** (Prong 3) - Systematic compression for edge deployment
+   - [ ] Knowledge distillation from larger models
+   - [ ] Progressive pruning (reduce model size)
+   - [ ] 4-bit quantization (GPTQ/GGUF)
+   - [ ] Raspberry Pi 5 / laptop deployment
+
+**See detailed implementation plan:** [Three-Prong Roadmap](docs/03-roadmap.md)
+
+**Priority: Edge Deployment**
 - [ ] Laptop-optimized mode (CPU fallback)
-- [ ] Expand TAM from 10K (GPU owners) to 10M (any laptop)
-
-**Priority 3: One-Click Installer**
-- [ ] Docker Compose bundle (vLLM + Weaviate + agents)
-- [ ] Web UI for setup (no .env editing)
-- [ ] Auto-download models
+- [ ] Expand from 10K users (GPU owners) to 10M (any laptop)
+- [ ] One-click installer (Docker Compose bundle)
 - [ ] Windows/Mac/Linux binaries
-
-**Priority 4: Lab Equipment Integrations**
-- [ ] LIMS (Benchling) plugin
-- [ ] Liquid handler automation (Tecan)
-- [ ] Microscope image analysis
-- [ ] Vertical lock-in for biotech labs
 
 ### 🔮 Phase 4 (2026+ - Vision)
 
@@ -375,6 +383,14 @@ Wake up to completed analysis, not running scripts.
 
 ## Documentation
 
+### Three-Prong Self-Improvement Strategy (NEW)
+- **[Documentation Hub](docs/index.md)** - Complete documentation index
+- **[Vision & Three-Prong Strategy](docs/01-vision.md)** - High-level approach to continuous learning
+- **[Current System State](docs/02-current-state.md)** - Gap analysis and implementation status
+- **[90-Day Roadmap](docs/03-roadmap.md)** - Detailed implementation plan
+- **[Technical Architecture](docs/04-architecture.md)** - System design, data flow, and integration
+
+### Current System (Phase 2)
 - **[Phase 2 Deployment Guide](docs/PHASE2_DEPLOYMENT.md)** - Step-by-step setup instructions
 - **[Phase 2 Completion Report](docs/PHASE2_COMPLETE.md)** - Test results & validation
 - **[System Documentation](docs/SYSTEM_DOCUMENTATION.md)** - Architecture deep-dive
