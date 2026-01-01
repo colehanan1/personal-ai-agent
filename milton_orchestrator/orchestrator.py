@@ -4,7 +4,9 @@ import datetime
 import hashlib
 import json
 import logging
+import os
 import re
+import sys
 import time
 from collections import deque
 from pathlib import Path
@@ -123,12 +125,68 @@ class Orchestrator:
             title=title,
         )
 
+    def _memory_enabled(self) -> bool:
+        raw = os.getenv("MILTON_MEMORY_ENABLED")
+        if raw is None:
+            return True
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _record_request_memory(
+        self,
+        request_id: str,
+        content: str,
+        mode_tag: Optional[str],
+        topic: str,
+    ) -> None:
+        if not self._memory_enabled():
+            return
+        if not content.strip():
+            return
+
+        tags = ["source:ntfy"]
+        if mode_tag:
+            tags.append(mode_tag)
+
+        try:
+            MemoryItem, add_memory = _get_memory_modules()
+        except Exception as exc:
+            logger.warning("Failed to load memory modules: %s", exc)
+            return
+
+        memory_item = MemoryItem(
+            agent="orchestrator",
+            type="request",
+            content=truncate_text(content.strip(), max_chars=self.config.max_output_size),
+            tags=tags,
+            importance=0.35,
+            source="ntfy",
+            request_id=request_id,
+            evidence=[f"topic:{topic}"],
+        )
+
+        try:
+            add_memory(memory_item, repo_root=self.config.target_repo)
+            logger.info(
+                "Recorded request memory: request_id=%s mode=%s topic=%s",
+                request_id,
+                mode_tag or "unknown",
+                topic,
+            )
+        except Exception as exc:
+            logger.warning("Failed to record request memory: %s", exc)
+
     def process_code_request(self, request_id: str, content: str):
         """Process a legacy CODE request (unused in new routing)."""
         logger.warning("Legacy CODE request handler invoked; defaulting to Claude pipeline")
         self.process_claude_code_request(request_id, content)
 
-    def process_claude_code_request(self, request_id: str, content: str):
+    def process_claude_code_request(
+        self,
+        request_id: str,
+        content: str,
+        *,
+        mode_tag: Optional[str] = None,
+    ):
         """Process a CLAUDE_CODE request"""
         if not self.config.enable_claude_pipeline:
             self.publish_status(
@@ -208,6 +266,7 @@ class Orchestrator:
                     tool_name="Claude Code",
                     result=result,
                     output_file=output_file,
+                    mode_tag=mode_tag,
                 )
                 logger.info(f"Request {request_id} completed successfully")
                 return
@@ -228,6 +287,7 @@ class Orchestrator:
                 tool_name="Claude Code",
                 result=result,
                 output_file=output_file,
+                mode_tag=mode_tag,
             )
 
         except Exception as e:
@@ -237,7 +297,13 @@ class Orchestrator:
                 title="Processing Error",
             )
 
-    def process_codex_code_request(self, request_id: str, content: str):
+    def process_codex_code_request(
+        self,
+        request_id: str,
+        content: str,
+        *,
+        mode_tag: Optional[str] = None,
+    ):
         """Process a CODEX_CODE request"""
         if not self.config.enable_codex_pipeline:
             self.publish_status(
@@ -304,6 +370,7 @@ class Orchestrator:
                 result=result,
                 output_file=execute_output or plan_output,
                 note=note,
+                mode_tag=mode_tag,
             )
 
         except Exception as e:
@@ -363,6 +430,7 @@ class Orchestrator:
             result=result,
             output_file=execute_output or plan_output,
             note=note,
+            mode_tag="codex",
         )
 
     def process_chat_request(self, request_id: str, content: str):
@@ -449,6 +517,7 @@ class Orchestrator:
         result,
         output_file: Optional[Path] = None,
         note: Optional[str] = None,
+        mode_tag: Optional[str] = None,
     ) -> None:
         full_text = self._load_output_text(output_file, result)
         if note:
@@ -461,6 +530,8 @@ class Orchestrator:
             full_text,
             request_id,
             self.config,
+            output_path=output_file,
+            mode_tag=mode_tag,
         )
 
     @staticmethod
@@ -512,6 +583,9 @@ class Orchestrator:
         normalized_message = _normalize_message_text(message)
         request_id = self.generate_request_id(message_id, normalized_message)
         mode, payload, reminder_kind = self.route_message(topic, normalized_message)
+        mode_tag = _mode_tag(mode, reminder_kind)
+
+        self._record_request_memory(request_id, normalized_message, mode_tag, topic)
 
         self.publish_status(
             f"[{request_id}] Mode: {mode}",
@@ -519,9 +593,9 @@ class Orchestrator:
         )
 
         if mode == "CLAUDE_CODE":
-            self.process_claude_code_request(request_id, payload)
+            self.process_claude_code_request(request_id, payload, mode_tag=mode_tag)
         elif mode == "CODEX_CODE":
-            self.process_codex_code_request(request_id, payload)
+            self.process_codex_code_request(request_id, payload, mode_tag=mode_tag)
         elif mode == "RESEARCH":
             if not self.config.enable_research_mode:
                 self.publish_status(
@@ -551,6 +625,7 @@ class Orchestrator:
                 full_text,
                 request_id,
                 self.config,
+                mode_tag=mode_tag,
             )
         elif mode == "REMINDER":
             if not reminder_kind:
@@ -562,6 +637,7 @@ class Orchestrator:
     def process_research_request(self, request_id: str, content: str):
         """Process a RESEARCH request (no Claude execution)"""
         logger.info(f"Processing RESEARCH request {request_id}")
+        mode_tag = "research"
 
         try:
             # Acknowledge
@@ -608,6 +684,7 @@ class Orchestrator:
                 formatted,
                 request_id,
                 self.config,
+                mode_tag=mode_tag,
             )
             logger.info(f"Research request {request_id} completed")
 
@@ -780,6 +857,41 @@ def _normalize_message_text(message: str) -> str:
     text = re.sub(r"^provided input\s*[:\-]\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^\[[^\]]+\]\s*[:\-]\s*", "", text)
     return text.strip()
+
+
+_MEMORY_CACHE = None
+
+
+def _get_memory_modules():
+    global _MEMORY_CACHE
+    if _MEMORY_CACHE is not None:
+        return _MEMORY_CACHE
+    try:
+        from memory.schema import MemoryItem
+        from memory.store import add_memory
+    except ModuleNotFoundError:
+        repo_root = Path(__file__).resolve().parents[1]
+        repo_str = str(repo_root)
+        if repo_str not in sys.path:
+            sys.path.insert(0, repo_str)
+        from memory.schema import MemoryItem
+        from memory.store import add_memory
+    _MEMORY_CACHE = (MemoryItem, add_memory)
+    return _MEMORY_CACHE
+
+
+def _mode_tag(mode: str, reminder_kind: Optional[str]) -> Optional[str]:
+    if mode == "CLAUDE_CODE":
+        return "claude"
+    if mode == "CODEX_CODE":
+        return "codex"
+    if mode == "RESEARCH":
+        return "research"
+    if mode == "REMINDER":
+        return (reminder_kind or "remind").lower()
+    if mode == "CHAT":
+        return "chat"
+    return None
 
 
 def _extract_provided_input_from_raw(text: str) -> Optional[str]:

@@ -6,13 +6,14 @@ Part of Milton Phase 2 automation
 import sys
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import json
 
 # Setup paths
-sys.path.insert(0, '/home/cole-hanan/milton')
-log_dir = Path('/home/cole-hanan/milton/logs/cortex')
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR))
+log_dir = ROOT_DIR / 'logs' / 'cortex'
 log_dir.mkdir(parents=True, exist_ok=True)
 
 # Configure logging
@@ -36,47 +37,59 @@ def main():
         logger.info("="*60)
 
         from agents.cortex import CORTEX
+        import milton_queue as queue_api
 
-        # Check for jobs in tonight/
-        job_dir = Path('/home/cole-hanan/milton/job_queue/tonight')
-        jobs = list(job_dir.glob('*.json'))
+        # Check for ready jobs in tonight/
+        jobs = queue_api.dequeue_ready_jobs(now=datetime.now(timezone.utc), base_dir=ROOT_DIR)
 
         if not jobs:
             logger.info("No jobs in queue")
             logger.info("="*60)
             return 0
 
-        logger.info(f"Found {len(jobs)} job(s) in queue")
+        logger.info(f"Found {len(jobs)} job(s) ready to process")
 
         cortex = CORTEX()
 
-        for job_file in jobs:
+        for job in jobs:
             logger.info("-"*60)
-            logger.info(f"Processing job: {job_file.name}")
+            logger.info(f"Processing job: {job.get('job_id', 'unknown')}")
 
             try:
-                with open(job_file, 'r') as f:
-                    job_data = json.load(f)
-
-                task = job_data.get('task', 'Unknown task')
+                payload = job.get('payload', {}) if isinstance(job.get('payload'), dict) else {}
+                task = job.get('task') or payload.get('task') or 'Unknown task'
                 logger.info(f"Task: {task[:100]}")
 
                 logger.info("Executing with CORTEX...")
-                result = cortex.execute(task)
+                result = cortex.process_overnight_job({
+                    'id': job.get('job_id'),
+                    'task': task,
+                })
 
-                logger.info(f"Status: {result.get('status', 'unknown')}")
-
-                # Archive completed job
-                archive_dir = Path('/home/cole-hanan/milton/job_queue/archive')
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                archive_path = archive_dir / job_file.name
-
-                job_file.rename(archive_path)
-                logger.info(f"✓ Job archived to: {archive_path}")
+                logger.info("Status: completed")
+                queue_api.mark_done(
+                    job.get('job_id'),
+                    artifact_paths=[],
+                    result=result,
+                    base_dir=ROOT_DIR,
+                )
+                logger.info("✓ Job archived")
 
             except Exception as e:
                 logger.error(f"Job processing error: {e}", exc_info=True)
-                logger.error(f"Skipping job: {job_file.name}")
+                try:
+                    job_id = job.get('job_id')
+                    if job_id:
+                        path = ROOT_DIR / 'job_queue' / 'tonight' / f'{job_id}.json'
+                        if path.exists():
+                            record = json.loads(path.read_text())
+                            record['status'] = 'failed'
+                            record['updated_at'] = datetime.now(timezone.utc).isoformat()
+                            record['error'] = str(e)
+                            path.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
+                except Exception:
+                    pass
+                logger.error(f"Skipping job: {job.get('job_id', 'unknown')}")
                 continue
 
         logger.info("="*60)

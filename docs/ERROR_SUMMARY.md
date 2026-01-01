@@ -42,7 +42,7 @@
 **Solution**: Update test to use module:function syntax
 
 ### 4. Logging System - PATH MISMATCH
-**Error**: Test checks `~/agent-system/logs` but logs go elsewhere  
+**Error**: Test checks `~/milton/logs` but logs go elsewhere  
 **Reason**: Logging system may use different path  
 **Solution**: Update test to check actual log path or create directory
 
