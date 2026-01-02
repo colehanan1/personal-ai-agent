@@ -408,6 +408,9 @@ Milton will continuously evolve through a three-prong approach:
 
 ## Documentation
 
+### System Summary (Single Source of Truth)
+- **[Milton System Summary](docs/MILTON_SYSTEM_SUMMARY.md)** - Comprehensive current-state architecture, goals, and roadmap
+
 ### Three-Prong Self-Improvement Strategy (NEW)
 - **[Documentation Hub](docs/index.md)** - Complete documentation index
 - **[Vision & Three-Prong Strategy](docs/01-vision.md)** - High-level approach to continuous learning

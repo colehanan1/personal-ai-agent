@@ -8,6 +8,7 @@ Welcome to Milton's comprehensive documentation. This guide will help you unders
 
 ### Getting Started
 - [Main README](../README.md) - System overview and quick start
+- [Milton System Summary](MILTON_SYSTEM_SUMMARY.md) - Single source of truth for current system and goals
 - [Phase 2 Deployment Guide](PHASE2_DEPLOYMENT.md) - Current system setup
 - [Phase 2 Completion Report](PHASE2_COMPLETE.md) - Test results and validation
 
