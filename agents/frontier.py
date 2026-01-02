@@ -233,10 +233,14 @@ Format as JSON.
             json_start = response.find("{")
             json_end = response.rfind("}") + 1
             analysis = json.loads(response[json_start:json_end])
-            analysis["paper_id"] = paper["id"]
+            analysis["paper_id"] = paper.get("id") or paper.get("arxiv_id") or "unknown"
         except Exception as e:
             logger.error(f"Failed to parse analysis: {e}")
-            analysis = {"relevance_score": 5, "error": str(e), "paper_id": paper["id"]}
+            analysis = {
+                "relevance_score": 5,
+                "error": str(e),
+                "paper_id": paper.get("id") or paper.get("arxiv_id") or "unknown",
+            }
 
         return analysis
 
@@ -273,15 +277,22 @@ Format as JSON.
 
         # Papers
         for i, paper in enumerate(papers, 1):
-            section = f"\n{i}. {paper['title']}\n"
-            section += f"   Authors: {', '.join(paper['authors'][:3])}"
+            title = paper.get("title", "Untitled")
+            authors = paper.get("authors") or []
+            published = paper.get("published", "")
+            paper_id = paper.get("id") or paper.get("arxiv_id") or "unknown"
+            pdf_url = paper.get("pdf_url", "unknown")
 
-            if len(paper["authors"]) > 3:
-                section += f" et al. ({len(paper['authors'])} total)"
+            section = f"\n{i}. {title}\n"
+            section += f"   Authors: {', '.join(authors[:3])}"
 
-            section += f"\n   Published: {paper['published'].split('T')[0]}\n"
-            section += f"   arXiv: {paper['id']}\n"
-            section += f"   PDF: {paper['pdf_url']}\n"
+            if len(authors) > 3:
+                section += f" et al. ({len(authors)} total)"
+
+            published_date = published.split("T")[0] if published else "unknown"
+            section += f"\n   Published: {published_date}\n"
+            section += f"   arXiv: {paper_id}\n"
+            section += f"   PDF: {pdf_url}\n"
 
             if include_analysis:
                 analysis = self.analyze_paper_relevance(paper)

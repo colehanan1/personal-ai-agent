@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 load_dotenv()
 
+from goals.api import list_goals
 from memory.schema import MemoryItem
 from memory.store import add_memory
 import milton_queue as queue_api
@@ -85,6 +86,16 @@ def _coerce_list(value: Any) -> list[str]:
     return [str(value).strip()] if str(value).strip() else []
 
 
+def _summarize_goals(goals: list[dict[str, Any]], limit: int = 5) -> list[str]:
+    items: list[str] = []
+    for goal in goals:
+        text = str(goal.get("text", "")).strip()
+        if not text:
+            continue
+        items.append(text)
+    return items[:limit]
+
+
 def _collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
     stdin_payload = _read_stdin_payload() if args.use_stdin or not sys.stdin.isatty() else {}
 
@@ -128,7 +139,13 @@ def _collect_inputs(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _build_markdown(now: datetime, data: dict[str, Any], job_ids: list[str]) -> str:
+def _build_markdown(
+    now: datetime,
+    data: dict[str, Any],
+    job_ids: list[str],
+    active_goals: list[str],
+    goal_scope: str,
+) -> str:
     date_label = now.strftime("%Y-%m-%d")
     lines = [f"# Evening Briefing - {date_label}", "", f"Captured at: {now.isoformat()}", ""]
 
@@ -147,6 +164,14 @@ def _build_markdown(now: datetime, data: dict[str, Any], job_ids: list[str]) -> 
         lines.append(f"## {section}")
         lines.extend([f"- {item}" for item in items])
         lines.append("")
+
+    lines.append("## Active Goals")
+    if active_goals:
+        lines.extend([f"- {goal}" for goal in active_goals])
+        lines.append(f"- Scope: {goal_scope}")
+    else:
+        lines.append("- No active goals")
+    lines.append("")
 
     lines.append("## Overnight Jobs")
     if job_ids:
@@ -213,12 +238,21 @@ def generate_evening_briefing(
         )
         job_ids.append(job_id)
 
+    active_goals = _summarize_goals(list_goals("daily", base_dir=base))
+    goal_scope = "daily"
+    if not active_goals:
+        active_goals = _summarize_goals(list_goals("weekly", base_dir=base))
+        goal_scope = "weekly"
+
     output_dir = base / "inbox" / "evening"
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{timestamp.strftime('%Y-%m-%d')}.md"
     output_path = output_dir / filename
 
-    output_path.write_text(_build_markdown(timestamp, data, job_ids), encoding="utf-8")
+    output_path.write_text(
+        _build_markdown(timestamp, data, job_ids, active_goals, goal_scope),
+        encoding="utf-8",
+    )
     _store_summary(timestamp, data, output_path, base)
 
     return output_path

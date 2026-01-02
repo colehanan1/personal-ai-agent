@@ -14,24 +14,60 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Load briefing data
-BRIEFING_FILE = Path(__file__).resolve().parents[1] / "inbox/morning/enhanced_brief_latest.json"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+STATE_DIR = Path(
+    os.getenv("STATE_DIR") or os.getenv("MILTON_STATE_DIR") or ROOT_DIR
+)
+
+LEGACY_JSON_BRIEF = ROOT_DIR / "inbox" / "morning" / "enhanced_brief_latest.json"
 
 
-def load_briefing():
-    """Load the latest briefing data."""
-    if not BRIEFING_FILE.exists():
+def _latest_briefing_path(briefing_type: str) -> Path | None:
+    candidates: list[Path] = []
+    for base in (STATE_DIR, ROOT_DIR):
+        folder = base / "inbox" / briefing_type
+        if not folder.exists():
+            continue
+        candidates.extend(folder.glob("*.md"))
+        candidates.extend(folder.glob("*.txt"))
+
+    if not candidates:
         return None
-
-    with open(BRIEFING_FILE) as f:
-        return json.load(f)
+    return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
-def format_briefing_text(data):
+def load_briefing_payload(briefing_type: str) -> dict | None:
+    """Load the latest briefing data (JSON or Markdown)."""
+    latest_path = _latest_briefing_path(briefing_type)
+    if not latest_path:
+        if briefing_type != "morning" or not LEGACY_JSON_BRIEF.exists():
+            return None
+        try:
+            with open(LEGACY_JSON_BRIEF) as f:
+                return {"format": "json", "data": json.load(f)}
+        except Exception:
+            return None
+
+    try:
+        text = latest_path.read_text(encoding="utf-8")
+    except Exception:
+        text = latest_path.read_text(errors="replace")
+    return {"format": "text", "text": text, "path": str(latest_path)}
+
+
+def format_briefing_text(payload: dict | None, briefing_type: str) -> str:
     """Format briefing as readable text with links."""
-    if not data:
-        return "❌ No briefing data available. Run: ./scripts/enhanced_morning_briefing.py"
+    if not payload:
+        return (
+            f"❌ No {briefing_type} briefing data available. "
+            "Run the briefing generator and try again."
+        )
 
+    if payload.get("format") == "text":
+        text = payload.get("text", "").strip()
+        return text or f"❌ {briefing_type.capitalize()} briefing file was empty."
+
+    data = payload.get("data") or {}
     timestamp = datetime.fromisoformat(data['timestamp']).strftime('%B %d, %Y at %I:%M %p')
 
     # Weather section
@@ -79,13 +115,17 @@ Full briefing: ~/milton/inbox/morning/enhanced_brief_latest.json"""
     return weather_text + benchmark_text + system_text + links_text
 
 
-def send_via_ntfy(briefing_text, topic=None):
+def send_via_ntfy(briefing_text, topic=None, title=None):
     """Send briefing via ntfy.sh push notification."""
     if not topic:
-        topic = os.getenv("NTFY_TOPIC", "milton-briefing")
+        topic = (
+            os.getenv("NTFY_TOPIC")
+            or os.getenv("ANSWER_TOPIC")
+            or "milton-briefing"
+        )
 
     # Use simple ASCII text for title, full text for body
-    title = "Milton Morning Briefing"
+    title = title or "Milton Briefing"
     body = briefing_text
 
     # Send to ntfy.sh
@@ -146,19 +186,26 @@ def main():
     parser = argparse.ArgumentParser(description="Send morning briefing to iPhone")
     parser.add_argument("--method", choices=["ntfy", "telegram", "print", "all"],
                        default="print", help="Delivery method")
+    parser.add_argument(
+        "--briefing",
+        choices=["morning", "evening"],
+        default="morning",
+        help="Which briefing to send",
+    )
     parser.add_argument("--topic", help="ntfy.sh topic name (default: milton-briefing)")
     args = parser.parse_args()
 
     # Load and format briefing
-    data = load_briefing()
-    briefing_text = format_briefing_text(data)
+    payload = load_briefing_payload(args.briefing)
+    briefing_text = format_briefing_text(payload, args.briefing)
+    title = f"Milton {args.briefing.capitalize()} Briefing"
 
     if args.method == "print" or args.method == "all":
         print(briefing_text)
         print()
 
     if args.method == "ntfy" or args.method == "all":
-        result = send_via_ntfy(briefing_text, args.topic)
+        result = send_via_ntfy(briefing_text, args.topic, title=title)
         print(result)
 
     if args.method == "telegram" or args.method == "all":

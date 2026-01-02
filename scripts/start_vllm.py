@@ -12,6 +12,8 @@ def main():
     # Phase 2: Use Llama-3.1-8B-Instruct (located in milton/models/)
     model_path = os.path.expanduser("~/milton/models/Llama-3.1-8B-Instruct-HF")
 
+    api_key = os.getenv("VLLM_API_KEY") or os.getenv("LLM_API_KEY") or "dy537t7K6iEcE3Xr8O0N-6hStQ5veeGcRclhixvWvEo"
+
     cmd = [
         sys.executable, "-m", "vllm.entrypoints.openai.api_server",
         "--model", model_path,
@@ -22,8 +24,9 @@ def main():
         "--dtype", "bfloat16",
         "--gpu-memory-utilization", "0.90",
         "--max-model-len", "8192",
-        "--api-key", "dy537t7K6iEcE3Xr8O0N-6hStQ5veeGcRclhixvWvEo",
     ]
+    if api_key:
+        cmd += ["--api-key", api_key]
 
     print("=" * 70)
     print("Starting vLLM Server for Llama 3.1 8B (Phase 2)")
