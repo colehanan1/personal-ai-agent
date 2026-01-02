@@ -7,9 +7,10 @@ Your PhD research plan is now integrated **everywhere** in Milton, not just brie
 ## What's PhD-Aware Now
 
 ### ✅ 1. Briefings (Morning & Evening)
-- **Location:** [scripts/phd_aware_morning_briefing.py](../scripts/phd_aware_morning_briefing.py), [scripts/phd_aware_evening_briefing.py](../scripts/phd_aware_evening_briefing.py)
+- **Location:** [scripts/enhanced_morning_briefing.py](../scripts/enhanced_morning_briefing.py) (unified), [scripts/phd_aware_morning_briefing.py](../scripts/phd_aware_morning_briefing.py) (wrapper)
 - **What:** Shows PhD goals, current year projects, immediate steps, relevant papers, progress tracking
-- **Replaces:** `enhanced_morning_briefing.py` (does everything it did PLUS PhD)
+- **Auto-detects:** PhD mode when PhD memories exist, or use `--phd-aware` flag to force
+- **Unified:** `enhanced_morning_briefing.py` now includes ALL features (standard + PhD-aware modes)
 
 ### ✅ 2. Nexus Agent (ALL Conversations)
 - **Location:** [agents/nexus.py](../agents/nexus.py:182-191)

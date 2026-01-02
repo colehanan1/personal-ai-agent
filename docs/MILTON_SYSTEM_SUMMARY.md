@@ -454,7 +454,7 @@ milton/
 
 ### C) Open questions for user (answerable, missing in repo)
 - ~~Which model name and size should be treated as the current production target (docs mention both 8B and 405B variants)?~~ **RESOLVED**: Production target is Llama-3.1-8B-Instruct (served as `llama31-8b-instruct`). 405B is documented as optional future upgrade.
-- Should PhD-aware briefings fully replace `enhanced_morning_briefing.py`, or do you want both pipelines kept? (Evidence: `docs/PHD_SYSTEM_WIDE_INTEGRATION.md`, `scripts/enhanced_morning_briefing.py`)
+- ~~Should PhD-aware briefings fully replace `enhanced_morning_briefing.py`, or do you want both pipelines kept?~~ **RESOLVED**: Unified into single `enhanced_morning_briefing.py` with auto-detection of PhD mode. PhD-aware wrapper kept for backward compatibility.
 - Which weather API key name should be canonical in docs and config: `WEATHER_API_KEY` or `OPENWEATHER_API_KEY`? (Evidence: `integrations/weather.py`, `docs/02-current-state.md`)
 - Should the iPhone listener be a first-class systemd service in this repo, or should docs point only to the standalone script? (Evidence: `docs/ASK_MILTON_FROM_IPHONE.md`, `scripts/ask_from_phone.py`)
 - Are both queue systems (`queue/` API and `job_queue/` file storage) intended long-term, or should one be deprecated? (Evidence: `queue/api.py`, `job_queue/`)
