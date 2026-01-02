@@ -1,0 +1,156 @@
+✅ [req_iQLVwA5fMAdI] Research complete
+
+SUMMARY:
+# Project Specification: Cyborg Research Hub
+
+## 1. Clear Objective and Context
+**Objective**: Build a web-based research platform that leverages the user's PhD lab expertise to explore, document, and prototype human-machine integration projects for improving human functions (e.g., cyborg enhancements like physiological monitoring, neuromodulation, BCIs, and exoskeletons). The platform will aggregate research from provided sources [1][2][3][4][5], allow lab-specific customization (e.g., uploading PhD data/experiments), generate project ideas tailored to lab capabilities, and provide simulation/prototyping tools for human augmentation concepts.
+
+**Context**: User's PhD lab focuses on advanced research (unspecified domain, but adaptable to biotech/neurotech per sources). Platform synthesizes military (WARP, VNS [1]), biomedical (BCIs, prosthetics [2]), tactical (HMI [3]), economic (human-machine economy [4]), and historical cyborg concepts [5]. Enables transitioning lab research into actionable cyborg/inspection/improvement projects, e.g., real-time bio-monitoring for fatigue mitigation or BCI-driven motor enhancement.
+
+**Target Users**: PhD researcher (user), lab collaborators. Emphasize ethical considerations (e.g., policy/doctrine from [1]).
+
+## 2. Technical Constraints
+- **Language**: Python 3.11+ (backend), TypeScript/React 18+ (frontend).
+- **Frameworks**:
+  - Backend: FastAPI (API server), SQLAlchemy (ORM), Celery (async tasks for simulations).
+  - Frontend: Next.js 14+ (app router, SSR), Tailwind CSS + shadcn/ui (styling), Chart.js/Recharts (visualizations).
+  - Database: PostgreSQL (structured data), Pinecone or Weaviate (vector DB for research search).
+  - Other: LangChain/LlamaIndex (RAG for research synthesis), Streamlit or Gradio (embedded prototyping demos).
+- **Dependencies** (requirements.txt/pip):
+  ```
+  fastapi==0.104.1
+  sqlalchemy==2.0.23
+  alembic==1.13.1
+  psycopg2-binary==2.9.9
+  celery==5.3.6
+  redis==5.0.1
+  langchain==0.1.0
+  pinecone-client==3.2.2
+  openai==1.3.8  # For embeddings/LLM (use local Ollama if no API key)
+  nextjs (npm): next@14, react@18, tailwindcss@3, @radix-ui/react-* (shadcn)
+  ```
+- **No external APIs requiring keys** (use local models like Ollama for LLM tasks).
+- **Deployment**: Docker-compose for local dev/prod. No cloud dependencies.
+- **Constraints**: Offline-first (embed all search results [1-5]). Mobile-responsive. Max 5s load times.
+
+## 3. File and Directory Boundaries
+Repository root: `/home/cole-hanan/milton`
+
+```
+milton/
+├── README.md                 # Project overview, setup instructions
+├── docker-compose.yml        # Local stack (postgres, redis, app)
+├── backend/                  # FastAPI server
+│   ├── main.py
+│   ├── requirements.txt
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── core/
+│   │   │   ├── config.py
+│   │   │   └── security.py
+│   │   ├── api/
+│   │   │   ├── v1/
+│   │   │   │   ├── endpoints/
+│   │   │   │   │   ├── research.py     # Research queries/synthesis
+│   │   │   │   │   ├── projects.py     # Project generation
+│   │   │   │   │   └── labs.py         # Lab data upload/customization
+│   │   │   │   └── __init__.py
+│   │   ├── models/
+│   │   │   ├── research.py             # Embedded sources [1-5]
+│   │   │   ├── projects.py             # Generated ideas
+│   │   │   └── labs.py                 # User PhD data
+│   │   ├── schemas/
+│   │   │   └── pydantic models
+│   │   ├── services/
+│   │   │   ├── rag.py                  # Research synthesis
+│   │   │   ├── generator.py            # Project ideation
+│   │   │   └── simulator.py            # Basic prototypes
+│   │   └── db/
+│   │       ├── session.py
+│   │       └── base.py
+│   └── migrations/                 # Alembic
+├── frontend/                  # Next.js app
+│   ├── next.config.js
+│   ├── tailwind.config.js
+│   ├── package.json
+│   ├── app/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx               # Landing: Research dashboard
+│   │   ├── research/
+│   │   │   └── page.tsx           # Search/summarize sources
+│   │   ├── projects/
+│   │   │   └── page.tsx           # Generate/prioritize ideas
+│   │   ├── lab/
+│   │   │   └── page.tsx           # Upload PhD data, customize
+│   │   └── prototypes/
+│   │       └── page.tsx           # Interactive sims (e.g., BCI demo)
+│   ├── components/
+│   │   ├── ui/                    # shadcn components
+│   │   ├── ResearchCard.tsx
+│   │   ├── ProjectIdea.tsx
+│   │   └── Simulator.tsx
+│   └── lib/
+│       └── api.ts                 # API client (fetch to backend)
+└── data/                       # Static/embedded
+    ├── sources.json             # JSON of [1-5] excerpts (parse/ingest on init)
+    └── lab_uploads/             # User PhD files (CSV/PDF)
+```
+
+- Backend serves API at `localhost:8000`. Frontend at `localhost:3000`.
+- No files outside these dirs. Init DB with `sources.json`.
+
+## 4. Testing Requirements
+- **Unit/Integration Tests**:
+  - Backend: `pytest backend/tests/` (80% coverage). Test RAG synthesis, project gen.
+    - Run: `cd backend && pytest -v`
+  - Frontend: `npm test` (Vitest/Jest for components).
+- **E2E Tests**: Playwright. Test user flows: search → generate project → simulate.
+  - Run: `npx playwright test`
+- **Manual Tests**:
+  1. `docker-compose up` → Visit `localhost:3000`.
+  2. Search "vagus nerve stimulation" → Expect summary from [1].
+  3. Input lab domain (e.g., "neuroscience") → Generate 3 project ideas.
+  4. Prototype WARP-like monitor → Displays mock heart rate chart.
+- **Linting**: `ruff` (backend), `eslint` + `prettier` (frontend). Run `pre-commit install`.
+
+## 5. Code Style and Best Practices
+- **Backend**: PEP 8, Black formatter, type hints everywhere (mypy strict). FastAPI dependency injection. SQLAlchemy async sessions. Embed sources [1-5] as initial DB seed (parse PDFs/texts into chunks/vectors).
+- **Frontend**: ESLint Airbnb, Prettier. TypeScript strict. Hooks-only (no classes). Accessible (ARIA labels).
+- **General**:
+  - Error handling: User-friendly messages (e.g., "No lab data uploaded").
+  - Security: Pydantic validation, CORS (frontend only), no auth (local tool).
+  - Performance: Lazy-load charts, paginate research results.
+  - Logging: Structlog (backend), console (frontend).
+  - Ethics: Every project idea includes "Ethical Notes" section (e.g., from [1][2]).
+  - Version Control: Git commit per feature. Semantic versioning.
+
+## 6. Deliverables Summary
+| Deliverable | Description | Acceptance Criteria |
+|-------------|-------------|---------------------|
+| **Research Dashboard** | Search/summarize [1-5] + lab data via RAG. | Accurate synthesis (e.g., query "BCI" returns [2] details). |
+| **Project Generator** | LLM-prompted ideas: "Leverage PhD lab X for Y cyborg project" (e.g., WARP + VNS [1]). | Outputs 3-5 ideas with steps, tech stack, ethics. |
+| **Lab Integration** | Upload PhD files (PDF/CSV), customize searches. | Vectors ingested, influences generations. |
+| **Prototypes** | Interactive sims: Bio-monitor chart [1], BCI cursor control [2]. | Real-time inputs → visual outputs. |
+| **Full Stack** | Dockerized, tested app. | Runs locally, E2E passes. |
+| **Docs** | README with screenshots, API docs (FastAPI /docs). | One-command setup. |
+
+## 7. Step-by-Step Implementation Plan
+1. **Setup (1-2h)**: Init repo structure. Docker-compose with Postgres/Redis. Seed `sources.json` with parsed [1-5] (key excerpts: WARP[1], BCIs[2], etc.). `docker-compose up`.
+2. **Backend Core (4h)**: FastAPI skeleton. DB models/schemas for Research/Projects/Labs. Alembic migrations. Ingest sources to vector DB.
+3. **RAG Service (3h)**: LangChain pipeline: Embed chunks → Pinecone upsert → Hybrid search (keywords + semantic).
+4. **API Endpoints (4h)**:
+   - `/research/query`: RAG synthesis.
+   - `/projects/generate?lab_domain=X`: Prompt: "Using [sources] + PhD in X, propose cyborg projects."
+   - `/labs/upload`: File ingest to vectors.
+   - `/prototypes/simulate/{type}`: e.g., WARP heart rate mock.
+5. **Frontend Skeleton (2h)**: Next.js app. Pages for research/projects/lab/prototypes. API utils.
+6. **Components & UI (6h)**: shadcn setup. Cards for results/ideas. Charts for sims (e.g., fatigue monitor [1]).
+7. **Prototypes (4h)**: 
+   - Bio-monitor: Real-time HR/stress chart.
+   - BCI demo: Mouse-emulated brain control [2].
+8. **Integration/Tests (3h)**: E2E flows. Lint/fix.
+9. **Polish (2h)**: Ethics footers, mobile UI, README.
+10. **Verify**: Manual tests per #4. Commit/push.
+
+**Total Estimate**: 28-30h. Prioritize MVP: Research + Projects (steps 1-6). Expand prototypes iteratively.
