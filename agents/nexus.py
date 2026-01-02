@@ -28,6 +28,7 @@ from agents.tool_registry import (
 )
 from memory.retrieve import query_relevant
 from memory.schema import MemoryItem
+from milton_orchestrator.state_paths import resolve_state_dir
 from phd_context import (
     get_phd_context,
     should_include_phd_context,
@@ -291,8 +292,6 @@ class NEXUS:
         """Handle reminder creation from natural language."""
         try:
             # Import here to avoid circular dependency
-            from pathlib import Path
-            import os
             import re
 
             # Dynamic imports to handle optional dependencies
@@ -309,8 +308,7 @@ class NEXUS:
                 )
 
             # Get database path
-            state_dir = os.getenv("STATE_DIR", os.path.expanduser("~/.local/state/milton"))
-            db_path = Path(state_dir) / "reminders.sqlite3"
+            db_path = resolve_state_dir() / "reminders.sqlite3"
 
             # Check for list command
             if re.search(r'\b(list|show|view)\b.*\breminder', user_text, re.IGNORECASE):
@@ -715,8 +713,8 @@ class NEXUS:
         queued_tasks = tasks or []
 
         # Save briefing to inbox
-        briefing_path = os.path.expanduser(
-            f"~/milton/inbox/evening/briefing_{datetime.now().strftime('%Y%m%d')}.txt"
+        briefing_path = resolve_state_dir() / "inbox" / "evening" / (
+            f"briefing_{datetime.now().strftime('%Y%m%d')}.txt"
         )
 
         try:

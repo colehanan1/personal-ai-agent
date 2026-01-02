@@ -18,5 +18,24 @@ import and path drift.
 
 ## Data Locations
 
-- Runtime state: `~/.local/state/milton_orchestrator`
-- Repo data folders: `inbox/`, `outputs/`, `logs/`
+- Runtime state (default): `~/.local/state/milton` (override with `STATE_DIR`)
+- Repo data folders (`inbox/`, `output/`, `outputs/`, `logs/`) are legacy/optional; use symlinks or set `STATE_DIR` to keep repo-root paths.
+
+### Default State Layout
+
+```
+~/.local/state/milton/
+|-- inbox/
+|   |-- morning/
+|   `-- evening/
+|-- job_queue/
+|   |-- tonight/
+|   `-- archive/
+|-- outputs/
+|-- logs/
+|-- queue/
+|   `-- jobs.db
+|-- reminders.sqlite3
+`-- data/
+    `-- memory/
+```

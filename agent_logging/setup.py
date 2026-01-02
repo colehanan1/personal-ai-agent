@@ -9,6 +9,8 @@ import sys
 from typing import Optional
 from datetime import datetime
 
+from milton_orchestrator.state_paths import resolve_state_dir
+
 
 def setup_logging(
     agent_name: str,
@@ -23,7 +25,7 @@ def setup_logging(
 
     Args:
         agent_name: Name of the agent (CORTEX, NEXUS, FRONTIER, etc.)
-        log_dir: Directory for log files (defaults to ~/milton/logs/{agent_name}/)
+        log_dir: Directory for log files (defaults to ~/.local/state/milton/logs/{agent_name}/)
         log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
         console_output: Whether to also log to console
 
@@ -38,7 +40,9 @@ def setup_logging(
     """
     # Determine log directory
     if log_dir is None:
-        log_dir = os.path.expanduser(f"~/milton/logs/{agent_name.lower()}")
+        log_dir = resolve_state_dir() / "logs" / agent_name.lower()
+    else:
+        log_dir = os.path.expanduser(log_dir)
 
     # Create directory if needed
     os.makedirs(log_dir, exist_ok=True)
@@ -99,7 +103,7 @@ def setup_root_logging(log_level: str = "INFO") -> None:
     Args:
         log_level: Logging level
     """
-    log_dir = os.path.expanduser("~/milton/logs")
+    log_dir = resolve_state_dir() / "logs"
     os.makedirs(log_dir, exist_ok=True)
 
     log_file = os.path.join(log_dir, f"system_{datetime.now().strftime('%Y%m%d')}.log")
@@ -161,4 +165,4 @@ if __name__ == "__main__":
     except ZeroDivisionError:
         logger.error("Caught exception", exc_info=True)
 
-    print(f"\nLog file created in: ~/milton/logs/test_agent/")
+    print(f"\nLog file created in: {resolve_state_dir() / 'logs' / 'test_agent'}/")

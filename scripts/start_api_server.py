@@ -34,6 +34,7 @@ from agents.nexus import NEXUS
 from goals.api import add_goal, list_goals
 from memory.init_db import create_schema, get_client
 from memory.operations import MemoryOperations
+from milton_orchestrator.state_paths import resolve_state_dir
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,7 +53,7 @@ LLM_API_KEY = (
     or os.getenv("VLLM_API_KEY")
     or os.getenv("OLLAMA_API_KEY")
 )
-STATE_DIR = Path(os.getenv("STATE_DIR") or os.getenv("MILTON_STATE_DIR") or ROOT_DIR)
+STATE_DIR = resolve_state_dir()
 
 app = Flask(__name__)
 CORS(app)

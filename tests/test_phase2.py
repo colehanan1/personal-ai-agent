@@ -4,11 +4,15 @@ Phase 2 Integration Tests
 Tests all major components of the Milton system
 """
 import sys
-sys.path.insert(0, '/home/cole-hanan/milton')
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR))
 
 import requests
 import json
-from pathlib import Path
+
+from milton_orchestrator.state_paths import resolve_state_dir
 
 def test_vllm():
     """Test 1: vLLM inference server"""
@@ -105,22 +109,23 @@ def test_directories():
     print("\n[TEST 5] Testing directory structure...")
     results = []
 
+    state_dir = resolve_state_dir()
     required_dirs = [
-        Path("/home/cole-hanan/milton/logs/nexus"),
-        Path("/home/cole-hanan/milton/logs/cortex"),
-        Path("/home/cole-hanan/milton/logs/frontier"),
-        Path("/home/cole-hanan/milton/job_queue/tonight"),
-        Path("/home/cole-hanan/milton/job_queue/archive"),
-        Path("/home/cole-hanan/milton/inbox/morning"),
-        Path("/home/cole-hanan/milton/outputs"),
+        state_dir / "logs" / "nexus",
+        state_dir / "logs" / "cortex",
+        state_dir / "logs" / "frontier",
+        state_dir / "job_queue" / "tonight",
+        state_dir / "job_queue" / "archive",
+        state_dir / "inbox" / "morning",
+        state_dir / "outputs",
     ]
 
     for dir_path in required_dirs:
         if dir_path.exists():
-            print(f"  ✓ {dir_path.relative_to('/home/cole-hanan/milton')}")
+            print(f"  ✓ {dir_path.relative_to(state_dir)}")
             results.append(True)
         else:
-            print(f"  ✗ Missing: {dir_path.relative_to('/home/cole-hanan/milton')}")
+            print(f"  ✗ Missing: {dir_path.relative_to(state_dir)}")
             dir_path.mkdir(parents=True, exist_ok=True)
             print(f"    Created: {dir_path}")
             results.append(True)
@@ -132,7 +137,7 @@ def test_config():
     print("\n[TEST 6] Testing configuration...")
     results = []
 
-    env_path = Path("/home/cole-hanan/milton/.env")
+    env_path = ROOT_DIR / ".env"
     if env_path.exists():
         with open(env_path, 'r') as f:
             content = f.read()

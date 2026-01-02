@@ -3,9 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ROOT_DIR}/.env"
-PID_DIR="${ROOT_DIR}/logs/dev_up"
-VLLM_PID_FILE="${PID_DIR}/vllm.pid"
-VLLM_LOG_FILE="${PID_DIR}/vllm.log"
 
 log() {
   echo "[dev_up] $*"
@@ -158,6 +155,11 @@ main() {
   ensure_conda_env
   validate_env
   load_env_file
+  STATE_DIR="${STATE_DIR:-$HOME/.local/state/milton}"
+  PID_DIR="${PID_DIR:-$STATE_DIR/logs/dev_up}"
+  VLLM_PID_FILE="${PID_DIR}/vllm.pid"
+  VLLM_LOG_FILE="${PID_DIR}/vllm.log"
+  export STATE_DIR
   start_weaviate
   start_vllm
   log "Done. Next: python scripts/healthcheck.py"

@@ -2,7 +2,19 @@
 import json
 from pathlib import Path
 
-def render_brief(json_path="inbox/morning/brief_latest.json") -> str:
+from dotenv import load_dotenv
+from milton_orchestrator.state_paths import resolve_state_dir
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+
+load_dotenv()
+
+def render_brief(json_path: str | Path | None = None) -> str:
+    if json_path is None:
+        candidate = resolve_state_dir() / "inbox" / "morning" / "brief_latest.json"
+        if not candidate.exists():
+            candidate = ROOT_DIR / "inbox" / "morning" / "brief_latest.json"
+        json_path = candidate
     data = json.loads(Path(json_path).read_text())
     weather = data["weather"]
     papers = data["papers"]
@@ -30,4 +42,3 @@ def render_brief(json_path="inbox/morning/brief_latest.json") -> str:
 
 if __name__ == "__main__":
     print(render_brief())
-

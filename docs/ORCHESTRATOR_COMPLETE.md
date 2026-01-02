@@ -127,7 +127,7 @@ RESEARCH: How does the authentication system work?
 - "Research complete" update
 - "Claude started" update
 - "Claude finished" with results
-- Full output saved to `~/.local/state/milton_orchestrator/outputs/`
+- Full output saved to `~/.local/state/milton/outputs/`
 
 ## Architecture
 
@@ -306,7 +306,7 @@ CODE: Add unit tests for the user authentication module
 [INFO] Building Claude prompt
 [INFO] Executing Claude Code (timeout: 600s)
 [INFO] Claude finished: exit_code=0, duration=45.2s
-[INFO] Saved full output to ~/.local/state/milton_orchestrator/outputs/claude_output_20251231_120045.txt
+[INFO] Saved full output to ~/.local/state/milton/outputs/claude_output_20251231_120045.txt
 [INFO] Publishing results to iPhone
 ```
 
@@ -323,7 +323,7 @@ STDOUT:
 Created tests/test_auth.py with 15 test cases
 All tests passing (15/15)
 
-Full output: ~/.local/state/milton_orchestrator/outputs/claude_output_20251231_120045.txt
+Full output: ~/.local/state/milton/outputs/claude_output_20251231_120045.txt
 ```
 
 ## Troubleshooting

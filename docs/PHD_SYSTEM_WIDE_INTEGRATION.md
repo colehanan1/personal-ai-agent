@@ -193,7 +193,7 @@ Milton's Context:
 - [agents/nexus.py](../agents/nexus.py) - PhD-aware agent core
 - [scripts/setup_morning_briefing.sh](../scripts/setup_morning_briefing.sh) - Use PhD briefings
 - [scripts/setup_phone_delivery.sh](../scripts/setup_phone_delivery.sh) - Use PhD briefings
-- [.env](../.env) - Added WEATHER_API_KEY
+- [.env](../.env) - Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility.
 
 ## What This Means For You
 

@@ -5,7 +5,7 @@ This document consolidates how the Milton system works today and what it is inte
 ## 1) Executive Summary
 
 ### What Milton is
-Milton is a local-first multi-agent AI system for research, automation, and coding assistance. It runs a shared local LLM via a vLLM server, persists user context in a memory layer (Weaviate with JSONL fallback), and uses specialized agents (NEXUS/CORTEX/FRONTIER) whose prompts live in `Prompts/`. The repo also includes a separate "Milton Orchestrator" package that ingests iPhone/ntfy requests, optionally performs Perplexity research and structured prompt optimization, and dispatches code changes through Claude Code or Codex CLI; a Flask-based API server and a React dashboard provide streaming responses and system status. Outputs and state are stored in repo folders (`inbox/`, `output/`, `job_queue/`) or under `~/.local/state/...` for orchestrator/reminders, depending on configuration. (Evidence: `README.md`, `scripts/start_vllm.py`, `docs/PHASE2_COMPLETE.md`, `agents/__init__.py`, `memory/backends.py`, `docs/ORCHESTRATOR_README.md`, `docs/PERPLEXITY_STRUCTURED_PROMPTING.md`, `scripts/start_api_server.py`, `milton-dashboard/README.md`, `docs/ARCHITECTURE_NAMESPACE.md`, `docs/reminders.md`)
+Milton is a local-first multi-agent AI system for research, automation, and coding assistance. It runs a shared local LLM via a vLLM server, persists user context in a memory layer (Weaviate with JSONL fallback), and uses specialized agents (NEXUS/CORTEX/FRONTIER) whose prompts live in `Prompts/`. The repo also includes a separate "Milton Orchestrator" package that ingests iPhone/ntfy requests, optionally performs Perplexity research and structured prompt optimization, and dispatches code changes through Claude Code or Codex CLI; a Flask-based API server and a React dashboard provide streaming responses and system status. Runtime state (inbox, job_queue, outputs, logs, reminders) defaults to `~/.local/state/milton` and can be overridden with `STATE_DIR` (repo folders can be symlinked for legacy layouts). (Evidence: `README.md`, `scripts/start_vllm.py`, `docs/PHASE2_COMPLETE.md`, `agents/__init__.py`, `memory/backends.py`, `docs/ORCHESTRATOR_README.md`, `docs/PERPLEXITY_STRUCTURED_PROMPTING.md`, `scripts/start_api_server.py`, `milton-dashboard/README.md`, `docs/ARCHITECTURE_NAMESPACE.md`, `docs/reminders.md`)
 
 ### What it does today
 - Runs local LLM inference via vLLM on port 8000; a single model is shared across agents. (Evidence: `scripts/start_vllm.py`, `docs/PHASE2_COMPLETE.md`, `README.md`)
@@ -14,7 +14,7 @@ Milton is a local-first multi-agent AI system for research, automation, and codi
 - Routes requests in NEXUS using deterministic rules and a tool registry; provides built-in tools for weather, arXiv, and reminders. (Evidence: `agents/nexus.py`, `agents/tool_registry.py`)
 - Executes multi-step tasks in CORTEX (LLM-generated plan -> step execution -> report) and processes overnight jobs from a file-based queue. (Evidence: `agents/cortex.py`, `queue/api.py`, `scripts/job_processor.py`)
 - Performs research discovery in FRONTIER via arXiv search plus optional News API usage, and supports daily discovery runs. (Evidence: `agents/frontier.py`, `integrations/arxiv_api.py`, `integrations/news_api.py`, `scripts/frontier_morning.py`)
-- Automates daily OS workflows (briefings, job processing) through systemd timers and scripts, writing outputs under `inbox/` and `job_queue/` (or `STATE_DIR`). (Evidence: `docs/DAILY_OS.md`, `systemd/`, `scripts/nexus_morning.py`, `scripts/job_processor.py`)
+- Automates daily OS workflows (briefings, job processing) through systemd timers and scripts, writing under `STATE_DIR` (default: `~/.local/state/milton`). (Evidence: `docs/DAILY_OS.md`, `systemd/`, `scripts/nexus_morning.py`, `scripts/job_processor.py`)
 - Adds PhD-aware briefings and context system-wide, with a defined PhD research plan and tagging rules. (Evidence: `docs/PHD_BRIEFING_SYSTEM.md`, `docs/PHD_SYSTEM_WIDE_INTEGRATION.md`, `phd_context.py`, `scripts/phd_aware_morning_briefing.py`)
 - Runs a voice-to-code orchestrator that ingests ntfy messages, uses Perplexity for research, and dispatches Claude Code with Codex fallback plus status updates. (Evidence: `docs/ORCHESTRATOR_README.md`, `milton_orchestrator/`, `docs/ORCHESTRATOR_COMPLETE.md`)
 - Implements a persistent reminders system with SQLite storage and ntfy notifications; integrated into NEXUS and the orchestrator. (Evidence: `milton_orchestrator/reminders.py`, `docs/reminders.md`, `REMINDERS_IMPLEMENTATION_SUMMARY.md`)
@@ -110,7 +110,7 @@ flowchart LR
     Inbox["inbox/ briefings"]
     Queue["job_queue/ + queue/api.py"]
     Output["output/ or orchestrator outputs"]
-    Logs["logs/ + ~/.local/state/milton_orchestrator/logs"]
+    Logs["STATE_DIR/logs (default ~/.local/state/milton/logs)"]
   end
 
   CLI --> NEXUS
@@ -230,7 +230,7 @@ Major subsystems and data flow:
 | --- | --- | --- | --- | --- |
 | vLLM server | Local inference for all agents | `scripts/start_vllm.py`, `LLM_API_URL`, `LLM_MODEL` | Agents return "LLM unavailable" if endpoint is down | `scripts/start_vllm.py`, `agents/nexus.py`, `README.md` |
 | Weaviate | Memory store | `docker-compose.yml`, `WEAVIATE_URL` | JSONL fallback used when Weaviate is down | `docker-compose.yml`, `memory/backends.py` |
-| OpenWeather | Weather in briefings/tool | `WEATHER_API_KEY`, `WEATHER_LOCATION` | Raises error if key missing | `integrations/weather.py`, `docs/MORNING_BRIEFING_GUIDE.md` |
+| OpenWeather | Weather in briefings/tool | Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. `WEATHER_LOCATION` | Raises error if key missing | `integrations/weather.py`, `docs/MORNING_BRIEFING_GUIDE.md` |
 | NewsAPI | News in briefings/frontier | `NEWS_API_KEY` | 401 if key missing | `integrations/news_api.py`, `docs/ERROR_SUMMARY.md` |
 | arXiv | Paper search | No key required | Network errors | `integrations/arxiv_api.py`, `agents/frontier.py` |
 | Home Assistant | Home status integration | `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN` | Connection refused if service not running | `integrations/home_assistant.py`, `docs/IMPLEMENTATION_PLAN.md`, `docs/ERROR_SUMMARY.md` |
@@ -249,7 +249,7 @@ Major subsystems and data flow:
 | Systemd timers/services | Scheduled briefings and job processing | `systemd/` | Uses user-level systemd units |
 | ntfy iPhone ingestion | Ask/answer loop and reminders | `docs/ASK_MILTON_FROM_IPHONE.md`, `scripts/ask_from_phone.py`, `milton_orchestrator/ntfy_client.py` | A "milton-phone-listener" unit is referenced in docs but not present |
 | API server + dashboard | Streaming responses and system status | `scripts/start_api_server.py`, `milton-dashboard/README.md` | Dashboard expects backend on port 8001 |
-| File outputs | Briefings, job results, archives | `inbox/`, `job_queue/`, `output/` | `STATE_DIR` can redirect paths |
+| File outputs | Briefings, job results, archives | `STATE_DIR/inbox`, `STATE_DIR/job_queue`, `STATE_DIR/outputs` | `STATE_DIR` can redirect paths |
 
 ### Remote access model
 - Tailnet-only click-to-open: Tailscale Serve provides a HTTPS base URL for output files, consumed via ntfy notifications. (Evidence: `docs/IOS_OUTPUT_ACCESS.md`, `scripts/setup_tailscale_serve_outputs.sh`)
@@ -276,10 +276,10 @@ Major subsystems and data flow:
 6. Enable systemd timers for daily briefings and job processing if automation is desired. (Evidence: `systemd/`, `docs/DAILY_OS.md`)
 
 ### Logs and state locations
-- Agent scripts write logs under repo `logs/` (e.g., `logs/nexus/`, `logs/cortex/`, `logs/frontier/`). (Evidence: `scripts/nexus_morning.py`, `scripts/job_processor.py`, `scripts/frontier_morning.py`)
-- Orchestrator logs and outputs live under `~/.local/state/milton_orchestrator/`. (Evidence: `docs/ORCHESTRATOR_README.md`)
+- Agent scripts write logs under `STATE_DIR/logs/` (default: `~/.local/state/milton/logs/`). (Evidence: `scripts/nexus_morning.py`, `scripts/job_processor.py`, `scripts/frontier_morning.py`)
+- Orchestrator logs and outputs live under `~/.local/state/milton/` by default. (Evidence: `docs/ORCHESTRATOR_README.md`)
 - Reminders database defaults to `~/.local/state/milton/reminders.sqlite3`. (Evidence: `docs/reminders.md`)
-- Briefing outputs are written to `inbox/` or to `STATE_DIR`. (Evidence: `scripts/nexus_morning.py`, `docs/DAILY_OS.md`)
+- Briefing outputs are written under `STATE_DIR/inbox/`. (Evidence: `scripts/nexus_morning.py`, `docs/DAILY_OS.md`)
 
 ### Common failure points and diagnostics
 - vLLM down or misconfigured: agents return "LLM unavailable"; ensure vLLM is running and `LLM_API_URL` is correct. (Evidence: `agents/nexus.py`, `docs/PHASE2_DEPLOYMENT.md`)
@@ -297,6 +297,8 @@ milton/
 ├── agents/                 # NEXUS, CORTEX, FRONTIER
 ├── agent_logging/          # logging utilities (mostly referenced in tests)
 ├── docs/                   # documentation
+│   └── legacy/             # legacy/unrelated references
+│       └── milton_delaware_ami_architecture_report.md  # municipal AMI RFQ summary
 ├── integrations/           # weather, arXiv, news, home assistant, calendar stub, web search
 ├── memory/                 # Weaviate + JSONL memory, schema, compression
 ├── milton_orchestrator/    # ntfy, Perplexity, Claude/Codex, reminders
@@ -311,8 +313,7 @@ milton/
 ├── tests/                  # unit/integration tests
 ├── Prompts/                # agent prompts and shared context
 ├── docker-compose.yml      # Weaviate service
-├── .env.example            # orchestrator config template
-└── milton_system_architecture_report.md  # unrelated AMI report
+└── .env.example            # orchestrator config template
 ```
 
 ### Inconsistencies / drift to resolve
@@ -320,8 +321,7 @@ milton/
 - `docs/04-architecture.md` references `memory/embeddings.py`, `agents/context_manager.py`, and `training/`/`evolution/` directories that are missing. (Evidence: `docs/04-architecture.md`)
 - `docs/MORNING_BRIEFING_GUIDE.md` references `milton-morning-briefing.*` systemd units that do not exist; repo contains `milton-nexus-morning.*`. (Evidence: `docs/MORNING_BRIEFING_GUIDE.md`, `systemd/`)
 - `docs/ASK_MILTON_FROM_IPHONE.md` references `milton-phone-listener` systemd service, but the repo only has `scripts/ask_from_phone.py` and no service unit. (Evidence: `docs/ASK_MILTON_FROM_IPHONE.md`, `scripts/ask_from_phone.py`, `systemd/`)
-- Weather API key naming drift: docs mention `OPENWEATHER_API_KEY` while code uses `WEATHER_API_KEY`. (Evidence: `docs/02-current-state.md`, `integrations/weather.py`)
-- `milton_system_architecture_report.md` describes a Milton, Delaware AMI system and appears unrelated to this repo's AI system. (Evidence: `milton_system_architecture_report.md`)
+- Weather API key naming policy: Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. (Evidence: `docs/02-current-state.md`, `integrations/weather.py`)
 
 ## 9) Truth Table: What Works vs What is Planned
 
@@ -357,7 +357,7 @@ milton/
 - Add automated importance scoring and pruning for memory. (Evidence: `docs/02-current-state.md`)
 - Clarify and document the default memory backend behavior (Weaviate vs JSONL fallback) across agents and scripts. (Evidence: `memory/backends.py`, `docs/MEMORY_SPEC.md`)
 - Standardize state paths (`STATE_DIR`, `~/.local/state/...`, repo paths) across scripts and docs. (Evidence: `docs/ARCHITECTURE_NAMESPACE.md`, `scripts/`, `docs/ORCHESTRATOR_README.md`)
-- Resolve configuration naming drift for weather API keys across docs and code. (Evidence: `docs/02-current-state.md`, `integrations/weather.py`)
+- Weather API key naming policy: Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. (Evidence: `docs/02-current-state.md`, `integrations/weather.py`)
 
 ### User-facing capability
 - Replace the calendar stub with OAuth-backed event retrieval. (Evidence: `integrations/calendar.py`)
@@ -434,9 +434,9 @@ milton/
 | NTFY_TOPIC | Reminders ntfy topic | `docs/reminders.md` |
 | NTFY_TOKEN | Reminders ntfy auth token | `REMINDERS_IMPLEMENTATION_SUMMARY.md` |
 | TZ | Timezone for reminders | `docs/reminders.md` |
-| WEATHER_API_KEY | Weather API key | `docs/MORNING_BRIEFING_GUIDE.md`, `docs/IMPLEMENTATION_PLAN.md` |
+| WEATHER_API_KEY | Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. | `docs/MORNING_BRIEFING_GUIDE.md`, `docs/IMPLEMENTATION_PLAN.md` |
 | WEATHER_LOCATION | Weather location | `docs/MORNING_BRIEFING_GUIDE.md`, `docs/IMPLEMENTATION_PLAN.md` |
-| OPENWEATHER_API_KEY | Weather API key (alternate name in docs) | `docs/02-current-state.md` |
+| OPENWEATHER_API_KEY | Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. | `docs/02-current-state.md` |
 | NEWS_API_KEY | News API key | `docs/02-current-state.md`, `docs/ERROR_SUMMARY.md`, `docs/IMPLEMENTATION_PLAN.md` |
 | HOME_ASSISTANT_URL | Home Assistant base URL | `docs/IMPLEMENTATION_PLAN.md` |
 | HOME_ASSISTANT_TOKEN | Home Assistant token | `docs/IMPLEMENTATION_PLAN.md` |
@@ -455,9 +455,8 @@ milton/
 ### C) Open questions for user (answerable, missing in repo)
 - ~~Which model name and size should be treated as the current production target (docs mention both 8B and 405B variants)?~~ **RESOLVED**: Production target is Llama-3.1-8B-Instruct (served as `llama31-8b-instruct`). 405B is documented as optional future upgrade.
 - ~~Should PhD-aware briefings fully replace `enhanced_morning_briefing.py`, or do you want both pipelines kept?~~ **RESOLVED**: Unified into single `enhanced_morning_briefing.py` with auto-detection of PhD mode. PhD-aware wrapper kept for backward compatibility.
-- Which weather API key name should be canonical in docs and config: `WEATHER_API_KEY` or `OPENWEATHER_API_KEY`? (Evidence: `integrations/weather.py`, `docs/02-current-state.md`)
+- ~~Which weather API key name should be canonical in docs and config: `WEATHER_API_KEY` or `OPENWEATHER_API_KEY`?~~ **RESOLVED**: Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. (Evidence: `integrations/weather.py`, `docs/02-current-state.md`)
 - Should the iPhone listener be a first-class systemd service in this repo, or should docs point only to the standalone script? (Evidence: `docs/ASK_MILTON_FROM_IPHONE.md`, `scripts/ask_from_phone.py`)
 - Are both queue systems (`queue/` API and `job_queue/` file storage) intended long-term, or should one be deprecated? (Evidence: `queue/api.py`, `job_queue/`)
-- What is the desired default state directory for outputs and logs across subsystems (repo paths vs `~/.local/state/`)? (Evidence: `docs/ARCHITECTURE_NAMESPACE.md`, `docs/DAILY_OS.md`, `docs/ORCHESTRATOR_README.md`)
+- Default state directory is `~/.local/state/milton` across subsystems; override with `STATE_DIR` when needed. (Evidence: `docs/ARCHITECTURE_NAMESPACE.md`, `docs/DAILY_OS.md`, `docs/ORCHESTRATOR_README.md`)
 - Should the dashboard API server be a first-class runtime (started by default), or remain an optional dev tool? (Evidence: `milton-dashboard/README.md`, `scripts/start_api_server.py`)
-- Is the unrelated `milton_system_architecture_report.md` intended to stay in the repo, or should it be moved/removed? (Evidence: `milton_system_architecture_report.md`)

@@ -48,7 +48,7 @@ Key flows:
 - Execution: CORTEX creates a plan, executes steps via LLM, and produces reports.
 - Discovery: FRONTIER searches arXiv, optionally scores relevance, and saves briefs.
 - Memory: Weaviate collections store short-term, working, and long-term entries.
-- Jobs: APScheduler persists jobs in `queue/jobs.db` and runs them on schedule.
+- Jobs: APScheduler persists jobs in `STATE_DIR/queue/jobs.db` (default: `~/.local/state/milton/queue/jobs.db`) and runs them on schedule.
 
 ## Component Map (What Each File Does)
 
@@ -56,13 +56,13 @@ Key flows:
 - `agents/nexus.py`
   - Orchestrator that loads `config/system_prompts/NEXUS.md`.
   - Routes requests via LLM (`route_request`).
-  - Generates morning/evening briefings and writes bedtime briefings to `inbox/evening/`.
+  - Generates morning/evening briefings and writes bedtime briefings to `STATE_DIR/inbox/evening/`.
 - `agents/cortex.py`
   - Execution agent that creates work plans, runs step execution via LLM, and generates reports.
   - Includes a `run_script` helper and overnight job processing workflow.
 - `agents/frontier.py`
   - Research discovery agent using arXiv and News.
-  - Generates research briefs and writes them to `outputs/`.
+  - Generates research briefs and writes them to `STATE_DIR/outputs/`.
 
 ### Integrations
 - `integrations/home_assistant.py`
@@ -94,7 +94,7 @@ Key flows:
 ### Logging
 - `logging/setup.py`
   - Rotating file logging and optional console output.
-  - Creates per-agent log directories in `logs/`.
+  - Creates per-agent log directories in `STATE_DIR/logs/`.
 - `logging/__init__.py`
   - Re-exports logging helpers.
 
@@ -158,4 +158,4 @@ python test_all_systems.py
 
 ## Security Notes
 - API keys are stored in `config/.env`. Keep this file local and private.
-- Logs in `logs/` may contain request metadata. Review before sharing.
+- Logs in `STATE_DIR/logs/` may contain request metadata. Review before sharing.

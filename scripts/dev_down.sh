@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PID_DIR="${ROOT_DIR}/logs/dev_up"
+STATE_DIR="${STATE_DIR:-$HOME/.local/state/milton}"
+PID_DIR="${PID_DIR:-$STATE_DIR/logs/dev_up}"
 VLLM_PID_FILE="${PID_DIR}/vllm.pid"
 
 log() {

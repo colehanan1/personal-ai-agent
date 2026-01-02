@@ -4,26 +4,17 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
-import os
 import re
 
 import yaml
+from milton_orchestrator.state_paths import resolve_state_dir
 
 VALID_SCOPES = {"daily", "weekly", "monthly"}
 SCHEMA_VERSION = 1
 
 
-def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
-
-
 def _state_dir(base_dir: Optional[Path] = None) -> Path:
-    if base_dir is not None:
-        return Path(base_dir)
-    env_dir = os.getenv("STATE_DIR") or os.getenv("MILTON_STATE_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return _repo_root()
+    return resolve_state_dir(base_dir)
 
 
 def _now_utc(now: Optional[datetime] = None) -> datetime:

@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import logging
 import sys
 
+from milton_orchestrator.state_paths import resolve_state_dir
+
 # Add parent directory to path for imports
 
 
@@ -323,13 +325,13 @@ Provide a 2-3 sentence overview of the main trends and breakthroughs.
         brief = "\n".join(sections)
 
         # Save to outputs
-        output_path = os.path.expanduser(
-            f"~/milton/outputs/research_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        output_path = resolve_state_dir() / "outputs" / (
+            f"research_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         )
 
         try:
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            with open(output_path, "w") as f:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with output_path.open("w") as f:
                 f.write(brief)
             logger.info(f"Research brief saved to {output_path}")
         except Exception as e:

@@ -16,5 +16,6 @@ _spec.loader.exec_module(_module)
 enqueue_job = _module.enqueue_job
 dequeue_ready_jobs = _module.dequeue_ready_jobs
 mark_done = _module.mark_done
+mark_failed = _module.mark_failed
 
-__all__ = ["enqueue_job", "dequeue_ready_jobs", "mark_done"]
+__all__ = ["enqueue_job", "dequeue_ready_jobs", "mark_done", "mark_failed"]

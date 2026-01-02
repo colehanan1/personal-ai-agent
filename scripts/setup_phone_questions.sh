@@ -39,6 +39,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/cole-hanan/milton
+Environment="STATE_DIR=%h/.local/state/milton"
 Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
 ExecStart=/home/cole-hanan/milton/scripts/ask_from_phone.py --listen
 Restart=always

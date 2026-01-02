@@ -432,11 +432,14 @@ Milton will continuously evolve through a three-prong approach:
 - **[Orchestrator Quickstart](docs/ORCHESTRATOR_QUICKSTART.md)** - ntfy outputs via Tailscale click-to-open or SMB share
 - **[Implementation Plan](docs/IMPLEMENTATION_PLAN.md)** - Original design decisions
 
+### Legacy / Unrelated References
+- **[Milton, Delaware AMI architecture report](docs/legacy/milton_delaware_ami_architecture_report.md)** - Municipal AMI RFQ summary (not related to the AI system)
+
 ---
 
 ## Output
 
-Consolidated repo artifacts live in `output/`. Runtime outputs can be redirected via `OUTPUT_DIR` (see `docs/ORCHESTRATOR_QUICKSTART.md`).
+Consolidated repo artifacts live in `output/`. Runtime outputs default to `~/.local/state/milton/outputs` (override with `STATE_DIR` or `OUTPUT_DIR`; see `docs/ORCHESTRATOR_QUICKSTART.md`).
 
 ### Click-to-Open Outputs
 
@@ -481,7 +484,7 @@ If you prefer a local-network alternative, configure the SMB share in `docs/ORCH
 
 ## Structure
 
-Key directories in the repo (with consolidated outputs in `output/`):
+Key directories in the repo (with consolidated outputs in `output/`). Runtime state now defaults to `~/.local/state/milton` (set `STATE_DIR` to keep repo-root `logs/`, `job_queue/`, `inbox/`, or use symlinks):
 
 ```
 milton/

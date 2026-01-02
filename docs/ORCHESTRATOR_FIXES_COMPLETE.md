@@ -66,7 +66,7 @@ journalctl --user -u milton-orchestrator -f
 
 Check outputs:
 ```bash
-ls -lah ~/.local/state/milton_orchestrator/outputs/
+ls -lah ~/.local/state/milton/outputs/
 ```
 
 ## Next Steps (Phase 2)

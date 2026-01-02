@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .state_paths import resolve_state_dir
+
 
 @dataclass
 class Config:
@@ -179,9 +181,8 @@ class Config:
         )
 
         # Logging and state
-        home = Path.home()
-        log_dir = Path(os.getenv("LOG_DIR", home / ".local/state/milton_orchestrator/logs"))
-        state_dir = Path(os.getenv("STATE_DIR", home / ".local/state/milton_orchestrator"))
+        state_dir = resolve_state_dir()
+        log_dir = Path(os.getenv("LOG_DIR", state_dir / "logs"))
 
         output_dir = Path(
             os.getenv("OUTPUT_DIR", state_dir / "outputs")

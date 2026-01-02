@@ -27,16 +27,12 @@ from goals.api import list_goals
 from memory.schema import MemoryItem
 from memory.store import add_memory, get_user_profile
 from memory.retrieve import query_relevant
+from milton_orchestrator.state_paths import resolve_state_dir
 
 
 def _state_dir(base_dir: Optional[Path] = None) -> Path:
     """Get state directory from args, env, or default."""
-    if base_dir is not None:
-        return Path(base_dir)
-    env_dir = os.getenv("STATE_DIR") or os.getenv("MILTON_STATE_DIR")
-    if env_dir:
-        return Path(env_dir)
-    return ROOT_DIR
+    return resolve_state_dir(base_dir)
 
 
 def _now_utc(now: Optional[datetime] = None) -> datetime:

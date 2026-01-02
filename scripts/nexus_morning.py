@@ -4,14 +4,21 @@ Generate morning briefing via systemd timer
 Part of Milton Phase 2 automation
 """
 import sys
-import os
 from pathlib import Path
 from datetime import datetime
 import logging
 
+from dotenv import load_dotenv
+from milton_orchestrator.state_paths import resolve_state_dir
+
 # Setup paths
-sys.path.insert(0, '/home/cole-hanan/milton')
-log_dir = Path('/home/cole-hanan/milton/logs/nexus')
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR))
+
+load_dotenv()
+
+STATE_DIR = resolve_state_dir()
+log_dir = STATE_DIR / "logs" / "nexus"
 log_dir.mkdir(parents=True, exist_ok=True)
 
 # Configure logging
@@ -42,12 +49,7 @@ def main():
         logger.info("Generating morning briefing...")
         briefing = nexus.generate_morning_briefing()
 
-        state_dir = Path(
-            os.getenv("STATE_DIR")
-            or os.getenv("MILTON_STATE_DIR")
-            or "/home/cole-hanan/milton"
-        )
-        output_dir = state_dir / "inbox" / "morning"
+        output_dir = STATE_DIR / "inbox" / "morning"
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / f"nexus_{datetime.now().strftime('%Y-%m-%d')}.txt"
         output_path.write_text(briefing, encoding="utf-8")

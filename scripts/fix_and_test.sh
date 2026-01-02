@@ -3,16 +3,21 @@
 
 echo "=== FIXING KNOWN ISSUES ==="
 
+# Default state directory (override with STATE_DIR)
+STATE_DIR="${STATE_DIR:-$HOME/.local/state/milton}"
+
 # 1. Create log directory
 echo "Creating log directory..."
-mkdir -p ~/milton/logs
+mkdir -p "${STATE_DIR}/logs"
 echo "✓ Log directory created"
 
 # 2. Check .env file has required keys
 echo ""
 echo "Checking .env configuration..."
-if ! grep -q "WEATHER_API_KEY" .env 2>/dev/null; then
-    echo "⚠ WEATHER_API_KEY not set in .env"
+if ! grep -q "OPENWEATHER_API_KEY" .env 2>/dev/null && ! grep -q "WEATHER_API_KEY" .env 2>/dev/null; then
+    echo "⚠ Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility."
+elif ! grep -q "OPENWEATHER_API_KEY" .env 2>/dev/null && grep -q "WEATHER_API_KEY" .env 2>/dev/null; then
+    echo "ℹ Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility."
 fi
 if ! grep -q "NEWS_API_KEY" .env 2>/dev/null || grep -q "NEWS_API_KEY=YOUR_KEY_HERE" .env; then
     echo "⚠ NEWS_API_KEY not configured in .env"

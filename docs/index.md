@@ -32,6 +32,9 @@ Welcome to Milton's comprehensive documentation. This guide will help you unders
 - [System Documentation](SYSTEM_DOCUMENTATION.md) - Architecture deep-dive
 - [Implementation Plan](IMPLEMENTATION_PLAN.md) - Original design decisions
 
+### Legacy / Unrelated References
+- [Milton, Delaware AMI architecture report](legacy/milton_delaware_ami_architecture_report.md) - Municipal AMI RFQ summary (not related to the AI system)
+
 ---
 
 ## What is Milton?

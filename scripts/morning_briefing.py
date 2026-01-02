@@ -2,9 +2,14 @@
 import json
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from integrations.weather import WeatherAPI
 from integrations.arxiv_api import ArxivAPI
 from scripts.schemas import morning_briefing_payload
+from milton_orchestrator.state_paths import resolve_state_dir
+
+load_dotenv()
 
 def generate_morning_brief(
     query: str = "cat:q-bio.NC AND (dopamine OR olfaction)",
@@ -15,7 +20,7 @@ def generate_morning_brief(
 
     payload = morning_briefing_payload(weather, papers)
 
-    out_dir = Path("inbox/morning")
+    out_dir = resolve_state_dir() / "inbox" / "morning"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "brief_latest.json"
 
@@ -35,4 +40,3 @@ def generate_morning_brief(
 
 if __name__ == "__main__":
     generate_morning_brief()
-

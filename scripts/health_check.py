@@ -11,6 +11,10 @@ from datetime import datetime
 import requests
 import subprocess
 
+from milton_orchestrator.state_paths import resolve_state_dir
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+
 def check_vllm():
     """Check if vLLM inference server is running"""
     try:
@@ -72,7 +76,7 @@ def check_agents():
 
 def check_logs():
     """Check if log directories have recent activity"""
-    log_dir = Path("/home/cole-hanan/milton/logs")
+    log_dir = resolve_state_dir() / "logs"
     log_status = {}
 
     for agent in ["nexus", "cortex", "frontier"]:
@@ -90,7 +94,7 @@ def check_logs():
 def main():
     status = {
         "timestamp": datetime.utcnow().isoformat() + "Z",
-        "system_root": "/home/cole-hanan/milton",
+        "system_root": str(ROOT_DIR),
         "components": {
             "inference": check_vllm(),
             "memory": check_weaviate(),

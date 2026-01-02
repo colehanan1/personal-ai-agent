@@ -1,3 +1,5 @@
+> This is not related to the Milton AI agent system; it is a municipal AMI RFQ summary.
+
 # Milton System Architecture Report
 
 ## Executive Summary
@@ -113,7 +115,7 @@ Redundancy and open architecture are key requirements of the system design.[1]
 
 ## Validation Snippet (commented)
 ```python
-# python3 -c "import sys; print(len(open('milton_system_architecture_report.md').read()))"
+# python3 -c "import sys; print(len(open('docs/legacy/milton_delaware_ami_architecture_report.md').read()))"
 ```
 
 ## Sources
@@ -121,4 +123,4 @@ Redundancy and open architecture are key requirements of the system design.[1]
 - The RFQ defines hardware requirements for MTUs and DCUs.[1]
 - The RFQ defines network and communications requirements.[1]
 
-Report length: 5097 chars.
+Report length: 5204 chars.

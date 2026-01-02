@@ -32,7 +32,7 @@ Environment Variables:
   NTFY_BASE_URL          ntfy server URL (default: https://ntfy.sh)
   NTFY_MAX_CHARS         Max chars for short status messages (default: 160)
   NTFY_MAX_INLINE_CHARS  Max chars before switching to file output (default: 3000)
-  OUTPUT_DIR             Directory for saved outputs (default: ~/.local/state/milton_orchestrator/outputs)
+  OUTPUT_DIR             Directory for saved outputs (default: ~/.local/state/milton/outputs)
   OUTPUT_BASE_URL        Base URL for Click-to-open output (optional)
   OUTPUT_SHARE_URL       SMB share URL for output files (e.g. smb://host/share)
   OUTPUT_SHARE_HOST      SMB share host (used with OUTPUT_SHARE_NAME)

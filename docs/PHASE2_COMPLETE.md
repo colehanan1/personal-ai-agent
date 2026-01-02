@@ -132,14 +132,14 @@ conda activate milton
 python scripts/nexus_morning.py
 
 # Check output
-ls -lh inbox/morning/
-cat inbox/morning/brief_*.json | jq '.brief'
+ls -lh ~/.local/state/milton/inbox/morning/
+cat ~/.local/state/milton/inbox/morning/*.md
 ```
 
 ### Test Job Processor
 ```bash
 # Create test job
-cat > job_queue/tonight/test.json <<EOF
+cat > ~/.local/state/milton/job_queue/tonight/test.json <<EOF
 {
   "job_id": "test_$(date +%Y%m%d)",
   "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -151,7 +151,7 @@ EOF
 python scripts/job_processor.py
 
 # Check logs
-tail -30 logs/cortex/processor_*.log
+tail -30 ~/.local/state/milton/logs/cortex/processor_*.log
 ```
 
 ### Test Memory Operations

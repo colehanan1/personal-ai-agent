@@ -1,7 +1,9 @@
 [Unit]
-Description=Milton Orchestrator - Voice-to-Code System
+Description=Milton Phone Question Listener (ntfy)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=6
 
 [Service]
 Type=simple
@@ -9,8 +11,8 @@ WorkingDirectory=/home/cole-hanan/milton
 Environment="STATE_DIR=%h/.local/state/milton"
 EnvironmentFile=/home/cole-hanan/milton/.env
 Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
-ExecStart=/home/cole-hanan/miniconda3/envs/milton/bin/milton-orchestrator
-Restart=always
+ExecStart=/home/cole-hanan/milton/scripts/ask_from_phone.py --listen
+Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal

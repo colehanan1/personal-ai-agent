@@ -245,7 +245,11 @@ def test_weather_api() -> bool:
         weather = WeatherAPI()
 
         if not weather.api_key:
-            print_test("Weather API", "fail", "Not configured (set WEATHER_API_KEY)")
+            print_test(
+                "Weather API",
+                "fail",
+                "Not configured (Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility.)",
+            )
             return False
 
         # Get current weather
@@ -353,12 +357,13 @@ def test_logging() -> bool:
     try:
         from agent_logging import setup_logging
         import os
+        from milton_orchestrator.state_paths import resolve_state_dir
 
         logger = setup_logging("TEST_AGENT", console_output=False)
 
         logger.info("Test log entry")
 
-        log_dir = os.path.expanduser("~/milton/logs/test_agent")
+        log_dir = str(resolve_state_dir() / "logs" / "test_agent")
 
         if os.path.exists(log_dir):
             print_test("Logging System", "pass", f"Log directory: {log_dir}")

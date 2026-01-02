@@ -255,14 +255,14 @@ loginctl enable-linger cole-hanan
 - `milton-job-processor.service` + `.timer`
 
 ### Logs (auto-generated)
-- `logs/nexus/*.log` - NEXUS execution logs
-- `logs/cortex/*.log` - CORTEX execution logs
-- `logs/frontier/*.log` - FRONTIER execution logs
+- `STATE_DIR/logs/nexus/*.log` - NEXUS execution logs
+- `STATE_DIR/logs/cortex/*.log` - CORTEX execution logs
+- `STATE_DIR/logs/frontier/*.log` - FRONTIER execution logs
 
 ### Outputs (auto-generated)
-- `inbox/morning/brief_*.json` - Morning briefings
-- `outputs/*` - Job execution results
-- `job_queue/archive/*.json` - Completed jobs
+- `STATE_DIR/inbox/morning/*.md` - Morning briefings
+- `STATE_DIR/outputs/*` - Job execution results
+- `STATE_DIR/job_queue/archive/*.json` - Completed jobs
 
 ---
 

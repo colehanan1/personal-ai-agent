@@ -6,9 +6,11 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.executors.pool import ThreadPoolExecutor
 from datetime import datetime, time as dt_time
+from pathlib import Path
 from typing import Callable, Dict, Any, Optional, List
-import os
 import logging
+
+from milton_orchestrator.state_paths import resolve_state_dir
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +27,14 @@ class JobManager:
         Initialize job manager.
 
         Args:
-            db_path: Path to SQLite database (defaults to ~/milton/queue/jobs.db)
+            db_path: Path to SQLite database (defaults to ~/.local/state/milton/queue/jobs.db)
         """
         if db_path is None:
-            db_path = os.path.expanduser("~/milton/queue/jobs.db")
+            db_path = resolve_state_dir() / "queue" / "jobs.db"
+        db_path = Path(db_path).expanduser()
 
         # Ensure directory exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Configure job stores
         jobstores = {

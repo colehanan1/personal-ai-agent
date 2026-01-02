@@ -253,9 +253,11 @@ Topic routing takes priority over prefixes.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOG_DIR` | Log file directory | `~/.local/state/milton_orchestrator/logs` |
-| `STATE_DIR` | State file directory | `~/.local/state/milton_orchestrator` |
+| `LOG_DIR` | Log file directory | `~/.local/state/milton/logs` |
+| `STATE_DIR` | State file directory | `~/.local/state/milton` |
 | `MAX_OUTPUT_SIZE` | Max output before truncation | `4000` |
+
+Note: `STATE_DIR` is shared with the core Milton runtime by default. To keep the legacy orchestrator-only layout, set `STATE_DIR=~/.local/state/milton_orchestrator` explicitly.
 
 ## Testing
 
@@ -282,14 +284,14 @@ pytest -v
 
 Logs are stored in two places:
 
-1. **File logs**: `~/.local/state/milton_orchestrator/logs/YYYY-MM-DD.log`
+1. **File logs**: `~/.local/state/milton/logs/YYYY-MM-DD.log`
 2. **Systemd journal**: `journalctl --user -u milton-orchestrator -f`
 
 ## Output Files
 
 Full Claude Code outputs are saved to:
 ```
-~/.local/state/milton_orchestrator/outputs/
+~/.local/state/milton/outputs/
 ```
 
 Codex outputs (plan + execute) are saved alongside Claude outputs with `codex_*` filenames.
@@ -376,8 +378,8 @@ Each file is timestamped for easy reference.
 
 3. Check outputs and logs after a fallback:
    ```bash
-   ls -lah ~/.local/state/milton_orchestrator/outputs/
-   tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
+   ls -lah ~/.local/state/milton/outputs/
+   tail -f ~/.local/state/milton/logs/$(date +%Y-%m-%d).log
    ```
 
 ### Reminders not firing
@@ -388,11 +390,11 @@ Each file is timestamped for easy reference.
    ```
 2. Check the reminders database:
    ```bash
-   ls -lah ~/.local/state/milton_orchestrator/reminders.sqlite3
+   ls -lah ~/.local/state/milton/reminders.sqlite3
    ```
 3. Watch logs for scheduler activity:
    ```bash
-   tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
+   tail -f ~/.local/state/milton/logs/$(date +%Y-%m-%d).log
    ```
 
 ## Security
@@ -443,4 +445,4 @@ MIT License
 ## Support
 
 For issues and questions:
-- Logs: Check `~/.local/state/milton_orchestrator/logs/`
+- Logs: Check `~/.local/state/milton/logs/`

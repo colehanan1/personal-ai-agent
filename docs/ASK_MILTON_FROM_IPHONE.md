@@ -19,6 +19,31 @@ Your Milton AI is now listening for questions from your iPhone! Send a question 
 
 ---
 
+## ✅ Recommended: Systemd Listener Service (Primary Path)
+
+This repo ships a first-class systemd user unit: `systemd/milton-phone-listener.service`.
+
+### 1) Configure Topics
+Ensure `.env` includes `NTFY_TOPIC=your-topic` (responses). Questions arrive on `${NTFY_TOPIC}-ask`.
+
+If you already run `milton-orchestrator` on the same ntfy topics, do **not** run both listeners. Either disable one service or use distinct topics to avoid duplicate responses.
+
+### 2) Install + Enable
+```bash
+mkdir -p ~/.config/systemd/user
+cp /home/cole-hanan/milton/systemd/milton-phone-listener.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now milton-phone-listener.service
+```
+
+### 3) Check Status + Logs
+```bash
+systemctl --user status milton-phone-listener
+journalctl --user -u milton-phone-listener -f
+```
+
+---
+
 ## 📱 Method 1: Using ntfy App (Easiest)
 
 ### Setup (One Time):
@@ -139,6 +164,11 @@ ssh cole-hanan@[your-ip]
 
 ## 🔧 Service Management
 
+### Enable at Login:
+```bash
+systemctl --user enable --now milton-phone-listener
+```
+
 ### Check if Listener is Running:
 ```bash
 systemctl --user status milton-phone-listener
@@ -154,6 +184,11 @@ journalctl --user -u milton-phone-listener -f
 systemctl --user restart milton-phone-listener
 ```
 
+### Disable Service:
+```bash
+systemctl --user disable --now milton-phone-listener
+```
+
 ### Stop Service:
 ```bash
 systemctl --user stop milton-phone-listener
@@ -163,6 +198,35 @@ systemctl --user stop milton-phone-listener
 ```bash
 systemctl --user start milton-phone-listener
 ```
+
+---
+
+## Manual Mode (Debugging)
+
+Stop the service first to avoid running two listeners:
+```bash
+systemctl --user stop milton-phone-listener
+```
+
+Then run the script directly:
+```bash
+./scripts/ask_from_phone.py --listen
+./scripts/ask_from_phone.py --ask "What is the weather?"
+```
+
+---
+
+## Smoke Test (End-to-end)
+
+Publish a test question and observe the response:
+```bash
+# Send test question
+curl -d "What is 2+2?" https://ntfy.sh/${NTFY_TOPIC}-ask
+
+# Observe response (or watch in the ntfy app)
+curl -s "https://ntfy.sh/${NTFY_TOPIC}/json?poll=1" | jq -r '.message'
+```
+If `NTFY_TOPIC` is not exported in your shell, replace it with your topic or run `set -a; source .env; set +a`.
 
 ---
 
@@ -227,17 +291,8 @@ curl -d "[CORTEX] Write a bash script to backup my files" ntfy.sh/milton-briefin
 ## 📋 Quick Reference
 
 **Your Topics:**
-- Questions: `milton-briefing-code-ask`
-- Responses: `milton-briefing-code`
-
-**Test from Computer:**
-```bash
-# Send test question
-curl -d "What is 2+2?" ntfy.sh/milton-briefing-code-ask
-
-# Check for response
-curl -s ntfy.sh/milton-briefing-code/json?poll=1 | jq -r '.message'
-```
+- Questions: `${NTFY_TOPIC}-ask` (default: `milton-briefing-code-ask`)
+- Responses: `${NTFY_TOPIC}` (default: `milton-briefing-code`)
 
 **Service Commands:**
 ```bash

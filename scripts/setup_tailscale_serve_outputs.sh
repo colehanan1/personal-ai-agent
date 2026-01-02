@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OUTPUT_DIR="${OUTPUT_DIR:-$HOME/.local/state/milton_orchestrator/outputs}"
+STATE_DIR="${STATE_DIR:-$HOME/.local/state/milton}"
+OUTPUT_DIR="${OUTPUT_DIR:-$STATE_DIR/outputs}"
 
 echo "Using OUTPUT_DIR: ${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}"

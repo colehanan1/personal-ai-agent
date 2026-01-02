@@ -17,7 +17,7 @@ defer_goal("daily", "d-20250101-002", new_scope="weekly")
 
 ## Overnight Queue
 
-Queue jobs as JSON files in `job_queue/tonight/` using `queue/api.py`:
+Queue jobs as JSON files in `STATE_DIR/job_queue/tonight/` (default: `~/.local/state/milton/job_queue/tonight/`) using `queue/api.py`:
 
 ```python
 from milton_queue import enqueue_job
@@ -25,7 +25,21 @@ from milton_queue import enqueue_job
 enqueue_job("cortex_task", {"task": "Summarize today's lab notes"}, priority="high")
 ```
 
-Completed jobs move to `job_queue/archive/` with artifacts and results recorded.
+Completed jobs move to `STATE_DIR/job_queue/archive/` with artifacts and results recorded.
+
+## Queue Concurrency Check
+
+Run the integration test to verify concurrent processors never drop or duplicate work:
+
+```bash
+pytest tests/test_queue_concurrency.py -q
+```
+
+This test enqueues 25 jobs rapidly, runs multiple worker processes against the queue, and asserts each job is processed exactly once with results archived.
+
+## Queue Architecture Decision
+
+Long-term queue architecture is the file-based queue API (`queue/api.py` via `milton_queue`) backed by `job_queue/{tonight,archive}`. The APScheduler-based `job_queue/job_manager.py` (and its SQLite `queue/jobs.db`) is considered legacy and should be treated as deprecated.
 
 ## Briefings
 
@@ -41,11 +55,11 @@ Morning briefing (weather + papers + overnight results + priorities):
 python scripts/enhanced_morning_briefing.py
 ```
 
-Both scripts write Markdown to `inbox/` and store a summary memory item with the briefing path as provenance.
+Both scripts write Markdown to `STATE_DIR/inbox/` (default: `~/.local/state/milton/inbox/`) and store a summary memory item with the briefing path as provenance.
 
 ## Systemd Timers (User)
 
-Unit files live in `scripts/systemd/`. Install with:
+Unit files live in `systemd/`. Install with:
 
 ```bash
 bash scripts/systemd/install_daily_os.sh
@@ -60,4 +74,5 @@ If your conda path differs, edit the unit files before installing.
 
 ## State Directory
 
-Set `STATE_DIR` in `.env` (or your shell) to write goals/queue/inbox outside the repo root.
+`STATE_DIR` controls the base location for goals, queue, inbox, outputs, and logs.  
+Default: `~/.local/state/milton`. Set `STATE_DIR` in `.env` (or your shell) to override (including repo-root paths for legacy layouts).

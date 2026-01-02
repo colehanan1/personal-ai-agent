@@ -21,6 +21,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/cole-hanan/milton
+Environment="STATE_DIR=%h/.local/state/milton"
 Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
 ExecStart=/home/cole-hanan/milton/scripts/phd_aware_morning_briefing.py
 StandardOutput=journal
@@ -68,6 +69,6 @@ echo "  Disable:             systemctl --user disable milton-morning-briefing.ti
 echo "  Manual run:          ./scripts/phd_aware_morning_briefing.py"
 echo ""
 echo "BRIEFING LOCATION:"
-echo "  inbox/morning/enhanced_brief_latest.json"
+echo "  ~/.local/state/milton/inbox/morning/YYYY-MM-DD_phd_aware.md"
 echo ""
 echo "════════════════════════════════════════════════════════════════════"

@@ -322,6 +322,7 @@ LLM_MODEL=llama31-8b-instruct
 WEAVIATE_URL=http://localhost:8080
 
 # Integrations
+# Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility.
 OPENWEATHER_API_KEY=***
 NEWS_API_KEY=***
 NTFY_SERVER=https://ntfy.sh

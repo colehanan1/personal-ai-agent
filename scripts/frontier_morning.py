@@ -4,14 +4,21 @@ Daily research discovery via systemd timer
 Part of Milton Phase 2 automation
 """
 import sys
-import os
 from pathlib import Path
 from datetime import datetime
 import logging
 
+from dotenv import load_dotenv
+from milton_orchestrator.state_paths import resolve_state_dir
+
 # Setup paths
-sys.path.insert(0, '/home/cole-hanan/milton')
-log_dir = Path('/home/cole-hanan/milton/logs/frontier')
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR))
+
+load_dotenv()
+
+STATE_DIR = resolve_state_dir()
+log_dir = STATE_DIR / "logs" / "frontier"
 log_dir.mkdir(parents=True, exist_ok=True)
 
 # Configure logging

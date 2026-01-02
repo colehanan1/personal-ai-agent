@@ -11,7 +11,7 @@ Type=simple
 Environment="NTFY_TOPIC=milton-reminders-cole"
 Environment="NTFY_BASE_URL=https://ntfy.sh"
 Environment="TZ=America/New_York"
-Environment="STATE_DIR=/home/cole-hanan/.local/state/milton"
+Environment="STATE_DIR=%h/.local/state/milton"
 
 # Optional: ntfy authentication token
 # Environment="NTFY_TOKEN=tk_yourtoken"

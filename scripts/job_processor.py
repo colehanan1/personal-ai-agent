@@ -4,16 +4,20 @@ Process overnight job queue via systemd timer
 Part of Milton Phase 2 automation
 """
 import sys
-import os
 from pathlib import Path
 from datetime import datetime, timezone
 import logging
-import json
 
+from dotenv import load_dotenv
 # Setup paths
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
-log_dir = ROOT_DIR / 'logs' / 'cortex'
+from milton_orchestrator.state_paths import resolve_state_dir
+
+load_dotenv()
+
+STATE_DIR = resolve_state_dir()
+log_dir = STATE_DIR / 'logs' / 'cortex'
 log_dir.mkdir(parents=True, exist_ok=True)
 
 # Configure logging
@@ -40,7 +44,7 @@ def main():
         import milton_queue as queue_api
 
         # Check for ready jobs in tonight/
-        jobs = queue_api.dequeue_ready_jobs(now=datetime.now(timezone.utc), base_dir=ROOT_DIR)
+        jobs = queue_api.dequeue_ready_jobs(now=datetime.now(timezone.utc), base_dir=STATE_DIR)
 
         if not jobs:
             logger.info("No jobs in queue")
@@ -71,7 +75,7 @@ def main():
                     job.get('job_id'),
                     artifact_paths=[],
                     result=result,
-                    base_dir=ROOT_DIR,
+                    base_dir=STATE_DIR,
                 )
                 logger.info("✓ Job archived")
 
@@ -80,13 +84,12 @@ def main():
                 try:
                     job_id = job.get('job_id')
                     if job_id:
-                        path = ROOT_DIR / 'job_queue' / 'tonight' / f'{job_id}.json'
-                        if path.exists():
-                            record = json.loads(path.read_text())
-                            record['status'] = 'failed'
-                            record['updated_at'] = datetime.now(timezone.utc).isoformat()
-                            record['error'] = str(e)
-                            path.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
+                        queue_api.mark_failed(
+                            job_id,
+                            error=e,
+                            base_dir=STATE_DIR,
+                            now=datetime.now(timezone.utc),
+                        )
                 except Exception:
                     pass
                 logger.error(f"Skipping job: {job.get('job_id', 'unknown')}")

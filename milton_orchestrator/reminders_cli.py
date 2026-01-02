@@ -16,14 +16,14 @@ from .reminders import (
 )
 from .ntfy_client import NtfyClient
 from .config import Config
+from .state_paths import resolve_state_dir
 
 logger = logging.getLogger(__name__)
 
 
 def get_db_path() -> Path:
     """Get the database path from config or default."""
-    state_dir = os.getenv("STATE_DIR", os.path.expanduser("~/.local/state/milton"))
-    return Path(state_dir) / "reminders.sqlite3"
+    return resolve_state_dir() / "reminders.sqlite3"
 
 
 def get_ntfy_config() -> tuple[str, str, Optional[str]]:

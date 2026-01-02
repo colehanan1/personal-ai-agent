@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="${ROOT_DIR}/logs/services"
+STATE_DIR="${STATE_DIR:-$HOME/.local/state/milton}"
+LOG_DIR="${LOG_DIR:-$STATE_DIR/logs/services}"
+
+export STATE_DIR
 
 mkdir -p "${LOG_DIR}"
 

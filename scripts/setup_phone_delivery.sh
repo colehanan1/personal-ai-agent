@@ -45,6 +45,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/cole-hanan/milton
+Environment="STATE_DIR=%h/.local/state/milton"
 Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
 ExecStart=/bin/bash -c '/home/cole-hanan/milton/scripts/phd_aware_morning_briefing.py && /home/cole-hanan/milton/scripts/send_briefing_to_phone.py --method ntfy'
 StandardOutput=journal

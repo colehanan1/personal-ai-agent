@@ -11,13 +11,13 @@ from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
+from milton_orchestrator.state_paths import resolve_state_dir
+
 # Load environment variables
 load_dotenv()
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-STATE_DIR = Path(
-    os.getenv("STATE_DIR") or os.getenv("MILTON_STATE_DIR") or ROOT_DIR
-)
+STATE_DIR = resolve_state_dir()
 
 LEGACY_JSON_BRIEF = ROOT_DIR / "inbox" / "morning" / "enhanced_brief_latest.json"
 
@@ -105,12 +105,13 @@ Memory vectors: {system.get('memory_vectors', 0)}
 Status: {system.get('status', 'unknown').upper()}"""
 
     # Links
-    links_text = """
+    full_brief = STATE_DIR / "inbox" / "morning" / "enhanced_brief_latest.json"
+    links_text = f"""
 
 📱 LINKS
 Dashboard: http://localhost:5173
 API Status: http://localhost:8001/api/system-state
-Full briefing: ~/milton/inbox/morning/enhanced_brief_latest.json"""
+Full briefing: {full_brief}"""
 
     return weather_text + benchmark_text + system_text + links_text
 

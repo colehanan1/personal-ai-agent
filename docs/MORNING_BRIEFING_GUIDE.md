@@ -9,12 +9,12 @@ Your enhanced morning briefing automatically runs every day at **8:00 AM** and i
 
 ## 📍 Where to Find It
 
-**Primary Location:**
+**Primary Location (default):**
 ```
-inbox/morning/enhanced_brief_latest.json
+~/.local/state/milton/inbox/morning/YYYY-MM-DD.md
 ```
 
-This JSON file is updated daily at 8 AM and contains:
+This Markdown file is updated daily at 8 AM and contains:
 - Complete weather data
 - Benchmark summaries and recent test queries
 - System status with memory vector counts
@@ -26,8 +26,8 @@ This JSON file is updated daily at 8 AM and contains:
 # Human-readable console output
 ./scripts/enhanced_morning_briefing.py
 
-# View JSON data
-cat inbox/morning/enhanced_brief_latest.json | jq .
+# View briefing Markdown
+cat ~/.local/state/milton/inbox/morning/YYYY-MM-DD.md
 ```
 
 ### Manage the Timer
@@ -112,7 +112,7 @@ journalctl --user -u milton-morning-briefing.service --since today
 ```
 
 ### No weather data?
-Make sure `WEATHER_API_KEY` is set in your `.env` file.
+Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. Set it in your `.env` file.
 
 ### No benchmark data?
 Run a benchmark test to populate memory:

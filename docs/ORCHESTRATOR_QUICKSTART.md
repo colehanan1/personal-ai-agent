@@ -169,14 +169,14 @@ journalctl --user -u milton-orchestrator -f
 journalctl --user -u milton-orchestrator -n 50
 
 # File logs (daily)
-tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
+tail -f ~/.local/state/milton/logs/$(date +%Y-%m-%d).log
 ```
 
 ### Check Outputs
 
 Full outputs are saved to `OUTPUT_DIR` (default shown below):
 ```bash
-ls -lah ~/.local/state/milton_orchestrator/outputs/
+ls -lah ~/.local/state/milton/outputs/
 ```
 
 Codex outputs (plan + execute) are stored in the same directory with `codex_*.txt` filenames.
@@ -212,7 +212,7 @@ scripts/setup_samba_share.sh
 2) Set an SMB password (`sudo smbpasswd -a $USER`).  
 3) Restart Samba (`sudo systemctl restart smbd`).  
 4) Set `.env`:
-   - `OUTPUT_DIR=/home/cole-hanan/milton/shared_outputs`
+   - `OUTPUT_DIR=~/.local/state/milton/outputs`
    - `OUTPUT_SHARE_URL=smb://<host>/<share>`
 
 **iPhone steps:**
@@ -294,7 +294,7 @@ CLAUDE_TIMEOUT=0
    ```
 3. Send a request while Claude is unavailable/limited and check logs:
    ```bash
-   tail -f ~/.local/state/milton_orchestrator/logs/$(date +%Y-%m-%d).log
+   tail -f ~/.local/state/milton/logs/$(date +%Y-%m-%d).log
    ```
 
 ## Next Steps
@@ -329,7 +329,7 @@ milton/
 
 ## Getting Help
 
-- Check logs: `~/.local/state/milton_orchestrator/logs/`
+- Check logs: `~/.local/state/milton/logs/`
 - Run tests: `pytest -v`
 - Dry run: `milton-orchestrator --dry-run`
 - Verbose mode: `milton-orchestrator -v`
