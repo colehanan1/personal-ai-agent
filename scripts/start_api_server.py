@@ -45,7 +45,7 @@ MODEL_URL = os.getenv("LLM_API_URL") or os.getenv(
     "OLLAMA_API_URL", "http://localhost:8000"
 )
 MODEL_NAME = os.getenv(
-    "LLM_MODEL", os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-405B-Instruct")
+    "LLM_MODEL", os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
 )
 LLM_API_KEY = (
     os.getenv("LLM_API_KEY")

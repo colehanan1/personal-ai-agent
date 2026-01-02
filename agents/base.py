@@ -26,7 +26,7 @@ class BaseAgent:
         """
         self.agent_name = agent_name
         self.llm_url = os.getenv("LLM_API_URL", "http://localhost:8000")
-        self.model_name = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-405B-Instruct")
+        self.model_name = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
 
         # Load system prompt
         self.system_prompt = self._load_system_prompt()

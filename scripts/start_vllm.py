@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 vLLM Server Startup Script
-Starts the vLLM OpenAI-compatible API server with Llama 3.1 405B
+Starts the vLLM OpenAI-compatible API server with Llama 3.1 8B (production target)
 """
 import subprocess
 import sys

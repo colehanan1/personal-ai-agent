@@ -83,7 +83,7 @@ def test_vllm_inference() -> bool:
         import requests
 
         api_url = os.getenv("LLM_API_URL", "http://localhost:8000").rstrip("/")
-        model = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-405B-Instruct")
+        model = os.getenv("LLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
         api_key = (
             os.getenv("LLM_API_KEY")
             or os.getenv("VLLM_API_KEY")

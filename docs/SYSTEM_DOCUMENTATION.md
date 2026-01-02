@@ -100,7 +100,7 @@ Key flows:
 
 ### Scripts and Infrastructure
 - `scripts/start_vllm.py`
-  - Starts the vLLM OpenAI-compatible API server for Llama 3.1 405B.
+  - Starts the vLLM OpenAI-compatible API server for Llama 3.1 8B (production target).
 - `docker-compose.yml`
   - Weaviate service definition and persistent volume.
 - `requirements.txt`

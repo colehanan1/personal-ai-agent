@@ -34,22 +34,22 @@ Build production-grade multi-agent system within existing Milton repo, following
 **Question**: Which LLM setup should we use?
 
 **Options**:
-- **A. vLLM + Llama 3.1 405B** (per original request)
-  - Pros: Most powerful, local, privacy
+- **A. vLLM + Llama 3.1 8B** (current production standard)
+  - Pros: Good performance, reasonable resource usage, local, privacy
+  - Cons: Requires ~16GB VRAM, setup complexity
+  - Time: ~10 min download + setup
+
+- **B. Ollama + Llama 3.1 8B** (alternative for testing)
+  - Pros: Quick setup, works on standard hardware
+  - Cons: Slightly slower than vLLM
+  - Time: ~5 min setup
+
+- **C. vLLM + Llama 3.1 405B** (future/optional upgrade)
+  - Pros: Most powerful for complex reasoning
   - Cons: Requires 250GB download, ~90GB RAM, complex setup
   - Time: ~30 min download + setup
 
-- **B. Ollama + Smaller model** (e.g., Llama 3.1 8B)
-  - Pros: Quick setup, works on your hardware
-  - Cons: Less capable for complex reasoning
-  - Time: ~5 min setup
-
-- **C. API-based** (Claude API, OpenAI)
-  - Pros: Immediate, no local resources
-  - Cons: Costs money, requires internet, privacy concerns
-  - Time: Immediate
-
-**Recommendation**: Start with **Option B (Ollama)** for development/testing, plan migration to Option A for production.
+**Current Standard**: **Option A (vLLM + 8B)** is the production target. Option C (405B) can be considered for future upgrades if needed.
 
 ### 2. Memory System
 **Question**: How should we store memory?
@@ -393,8 +393,8 @@ WEATHER_API_KEY=187253855972163c4881236674f973d8
 WEATHER_LOCATION=St. Louis,US
 
 # Need to Add
-LLM_API_URL=http://localhost:11434  # Ollama default
-LLM_MODEL=llama3.1:8b                # Or llama3.1:405b for vLLM
+LLM_API_URL=http://localhost:8000     # vLLM default (production)
+LLM_MODEL=llama31-8b-instruct         # Production model (8B standard)
 
 # Optional (Phase 5)
 HOME_ASSISTANT_URL=http://localhost:8123
@@ -426,9 +426,9 @@ HOCKEY_TEAM=STL  # St. Louis Blues?
 Before I start building, please decide:
 
 ### 1. LLM Backend
-- [ ] **Option A**: vLLM + Llama 405B (powerful, complex)
-- [ ] **Option B**: Ollama + Llama 8B (quick, good enough)
-- [ ] **Option C**: API-based (Claude/OpenAI)
+- [x] **Option A**: vLLM + Llama 8B (production standard - currently deployed)
+- [ ] **Option B**: Ollama + Llama 8B (alternative for testing)
+- [ ] **Option C**: vLLM + Llama 405B (future upgrade, optional)
 
 ### 2. Memory System
 - [ ] **Option A**: File-based (simple, start here)
@@ -455,7 +455,7 @@ Which phases are essential for your first working version?
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | LLM setup fails | Blocker | Start with Ollama (easier than vLLM) |
-| Insufficient RAM for 405B | Can't use big model | Use 8B or 70B instead |
+| Insufficient VRAM for larger models | Can't upgrade from 8B | 8B is the production standard; larger models optional |
 | Integration APIs change | Integrations break | Build with fallbacks |
 | Overnight jobs fail silently | Miss results | Email/notify on failure |
 | Complex memory system | Slow development | Start simple (files), upgrade later |

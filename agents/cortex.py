@@ -53,7 +53,7 @@ class CORTEX:
         self.model_name = (
             model_name
             or os.getenv("LLM_MODEL")
-            or os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-405B-Instruct")
+            or os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
         )
         self.system_prompt = self._load_system_prompt()
 
