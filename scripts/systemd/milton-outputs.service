@@ -1,0 +1,17 @@
+[Unit]
+Description=Milton Outputs Static Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/milton
+Environment="PATH=%h/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
+ExecStart=%h/miniconda3/envs/milton/bin/python3 -m http.server 8899 --bind 127.0.0.1 --directory %h/milton/shared_outputs
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
