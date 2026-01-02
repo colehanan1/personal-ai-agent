@@ -12,6 +12,8 @@ from collections import deque
 from pathlib import Path
 from typing import Optional, Set
 
+import requests
+
 from .config import Config
 from .ntfy_client import NtfyClient, subscribe_topics_with_reconnect
 from .ntfy_summarizer import truncate_text
@@ -436,8 +438,69 @@ class Orchestrator:
     def process_chat_request(self, request_id: str, content: str):
         """Process a CHAT request (no Perplexity, no code execution)."""
         logger.info(f"Processing CHAT request {request_id}")
-        message = f"[{request_id}] CHAT mode received.\n\n{content}"
-        self.publish_status(message, title="Chat Request")
+        self.publish_status(
+            f"[{request_id}] Chatting...", title="Chat Request"
+        )
+
+        if self.dry_run:
+            response_text = f"[{request_id}] (dry run) {content}"
+        else:
+            try:
+                response_text = self._run_chat_llm(content)
+            except Exception as exc:
+                logger.error(
+                    "Chat LLM failed for request %s: %s",
+                    request_id,
+                    exc,
+                    exc_info=True,
+                )
+                self.publish_status(
+                    f"❌ [{request_id}] Chat failed: {exc}",
+                    title="Chat Error",
+                )
+                return
+
+        title = self._output_title(request_id, "Chat", success=True)
+        publish_response(
+            self.ntfy_client,
+            self.config.answer_topic,
+            title,
+            response_text,
+            request_id,
+            self.config,
+            force_file=True,
+            mode_tag="chat",
+        )
+
+    @staticmethod
+    def _run_chat_llm(content: str) -> str:
+        base_url = os.getenv("LLM_API_URL", "http://localhost:8000").rstrip("/")
+        model = (
+            os.getenv("LLM_MODEL")
+            or os.getenv("OLLAMA_MODEL")
+            or "llama31-8b-instruct"
+        )
+        api_key = (
+            os.getenv("LLM_API_KEY")
+            or os.getenv("VLLM_API_KEY")
+            or os.getenv("OLLAMA_API_KEY")
+        )
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": 500,
+            "temperature": 0.7,
+        }
+        response = requests.post(
+            f"{base_url}/v1/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=120,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"].strip()
 
     def process_reminder_request(self, request_id: str, content: str, kind: str):
         """Process REMIND/ALARM requests."""
