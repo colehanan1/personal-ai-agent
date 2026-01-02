@@ -31,6 +31,7 @@ load_dotenv(dotenv_path=ROOT_DIR / ".env")
 from agents.cortex import CORTEX
 from agents.frontier import FRONTIER
 from agents.nexus import NEXUS
+from goals.api import add_goal, list_goals
 from memory.init_db import create_schema, get_client
 from memory.operations import MemoryOperations
 
@@ -51,6 +52,7 @@ LLM_API_KEY = (
     or os.getenv("VLLM_API_KEY")
     or os.getenv("OLLAMA_API_KEY")
 )
+STATE_DIR = Path(os.getenv("STATE_DIR") or os.getenv("MILTON_STATE_DIR") or ROOT_DIR)
 
 app = Flask(__name__)
 CORS(app)
@@ -111,6 +113,80 @@ def _chunk_text(text: str, words_per_chunk: int = 6) -> Iterable[str]:
         yield buffer
 
 
+_GOAL_INTENT_PATTERNS = [
+    re.compile(r"^\s*(?:i\s+want\s+to|i\s+need\s+to|i\s+plan\s+to)\s+(?P<goal>.+)$", re.I),
+    re.compile(r"^\s*(?:i\s+should)\s+(?P<goal>.+)$", re.I),
+    re.compile(r"^\s*(?:please\s+)?remember\s+to\s+(?P<goal>.+)$", re.I),
+    re.compile(r"^\s*(?:remind\s+me\s+to)\s+(?P<goal>.+)$", re.I),
+    re.compile(r"^\s*(?:add\s+to\s+goals?|add\s+goal|goal|todo)\s*[:\-]\s*(?P<goal>.+)$", re.I),
+]
+
+
+def _normalize_goal_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    cleaned = cleaned.strip(" \"'`")
+    cleaned = re.sub(r"[.!?]+$", "", cleaned).strip()
+    cleaned = re.sub(r"\bmyself\b", "", cleaned, flags=re.I).strip()
+    cleaned = re.sub(r"^to\s+", "", cleaned, flags=re.I).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _extract_goal_text(query: str) -> Optional[str]:
+    for pattern in _GOAL_INTENT_PATTERNS:
+        match = pattern.match(query)
+        if match:
+            goal = match.group("goal").strip()
+            normalized = _normalize_goal_text(goal)
+            return normalized or None
+    return None
+
+
+def _goal_exists(goal_text: str) -> Optional[str]:
+    normalized = _normalize_goal_text(goal_text).lower()
+    for scope in ("daily", "weekly", "monthly"):
+        for goal in list_goals(scope, base_dir=STATE_DIR):
+            existing = _normalize_goal_text(str(goal.get("text", ""))).lower()
+            if existing == normalized and goal.get("id"):
+                return str(goal["id"])
+    return None
+
+
+def _capture_goal(query: str) -> Optional[Dict[str, str]]:
+    goal_text = _extract_goal_text(query)
+    if not goal_text:
+        return None
+
+    try:
+        existing_id = _goal_exists(goal_text)
+        if existing_id:
+            return {"id": existing_id, "text": goal_text, "status": "existing"}
+
+        goal_id = add_goal(
+            "daily",
+            goal_text,
+            tags=["captured", "intent"],
+            base_dir=STATE_DIR,
+        )
+        return {"id": goal_id, "text": goal_text, "status": "added"}
+    except Exception as exc:
+        logger.warning("Goal capture failed: %s", exc)
+        return None
+
+
+def _format_goal_capture(capture: Dict[str, str]) -> str:
+    text = capture.get("text", "goal")
+    goal_id = capture.get("id")
+    status = capture.get("status")
+    if status == "existing":
+        suffix = f" (id {goal_id})" if goal_id else ""
+        return f"Goal already tracked: {text}{suffix}"
+    if status == "added":
+        suffix = f" (id {goal_id})" if goal_id else ""
+        return f"Goal captured: {text}{suffix}"
+    return f"Goal captured: {text}"
+
+
 def _check_url(url: str, timeout: float = 1.5) -> bool:
     try:
         headers = {}
@@ -168,12 +244,34 @@ def _route_query(query: str, agent_override: Optional[str]) -> Dict[str, Any]:
 
     try:
         routing = nexus.route_request(query)
-        target = str(routing.get("target", "NEXUS")).strip()
+        if isinstance(routing, dict):
+            target = str(routing.get("target", "NEXUS")).strip()
+            return {
+                "target": target,
+                "reasoning": routing.get("reasoning", "Auto routing"),
+                "confidence": routing.get("confidence", 0.92),
+                "context": routing.get("context", {}),
+            }
+
+        route = str(getattr(routing, "route", "nexus")).strip().lower()
+        tool_name = getattr(routing, "tool_name", None)
+        if route == "tool" and tool_name:
+            target = str(tool_name)
+        elif route == "cortex":
+            target = "CORTEX"
+        elif route == "frontier":
+            target = "FRONTIER"
+        else:
+            target = "NEXUS"
+
         return {
             "target": target,
-            "reasoning": routing.get("reasoning", "Auto routing"),
+            "reasoning": getattr(routing, "rationale", "Auto routing"),
             "confidence": 0.92,
-            "context": routing.get("context", {}),
+            "context": {
+                "context_ids": getattr(routing, "context_ids", []),
+                "tool_name": tool_name,
+            },
         }
     except Exception as exc:
         logger.warning("Routing failed: %s", exc)
@@ -276,6 +374,8 @@ def ask() -> Any:
     if not query:
         return jsonify({"error": "Missing 'query'"}), 400
 
+    goal_capture = _capture_goal(query)
+
     agent_override = data.get("agent")
     use_web = data.get("use_web")
     if use_web is not None:
@@ -312,16 +412,19 @@ def ask() -> Any:
             "duration_ms": None,
             "response": None,
             "use_web": use_web,
+            "goal_capture": goal_capture,
         }
 
-    return jsonify(
-        {
-            "request_id": request_id,
-            "status": "accepted",
-            "agent_assigned": agent_assigned,
-            "confidence": routing["confidence"],
-        }
-    )
+    response = {
+        "request_id": request_id,
+        "status": "accepted",
+        "agent_assigned": agent_assigned,
+        "confidence": routing["confidence"],
+    }
+    if goal_capture:
+        response["goal_capture"] = goal_capture
+
+    return jsonify(response)
 
 
 @sock.route("/ws/request/<request_id>")
@@ -367,6 +470,10 @@ def stream_request(ws, request_id: str) -> None:
     except Exception as exc:
         error_text = f"Error: {exc}"
         response_text = error_text
+
+    goal_capture = req.get("goal_capture")
+    if goal_capture:
+        response_text = f"{response_text}\n\n{_format_goal_capture(goal_capture)}"
 
     for chunk in _chunk_text(response_text):
         _send_ws(ws, "token", content=chunk)

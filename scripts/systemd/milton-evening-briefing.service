@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=%h/milton
 Environment="PATH=%h/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
-ExecStart=%h/miniconda3/envs/milton/bin/python3 %h/milton/scripts/evening_briefing.py --non-interactive
+ExecStart=/bin/bash -c '%h/miniconda3/envs/milton/bin/python3 %h/milton/scripts/evening_briefing.py --non-interactive && %h/miniconda3/envs/milton/bin/python3 %h/milton/scripts/send_briefing_to_phone.py --method ntfy --briefing evening'
 StandardOutput=journal
 StandardError=journal
 TimeoutStartSec=300

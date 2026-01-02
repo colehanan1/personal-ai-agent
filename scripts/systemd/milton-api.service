@@ -1,0 +1,18 @@
+[Unit]
+Description=Milton API Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/milton
+EnvironmentFile=%h/milton/.env
+Environment="PATH=%h/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
+ExecStart=%h/miniconda3/envs/milton/bin/python3 %h/milton/scripts/start_api_server.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

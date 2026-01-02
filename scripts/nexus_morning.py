@@ -40,15 +40,18 @@ def main():
         nexus = NEXUS()
 
         logger.info("Generating morning briefing...")
-        result = nexus.morning_briefing()
+        briefing = nexus.generate_morning_briefing()
 
-        # Extract path from result
-        artifacts = result.get('brief', {}).get('artifacts', [])
-        if artifacts:
-            output_path = artifacts[0].get('path', 'unknown')
-            logger.info(f"✓ Briefing saved to: {output_path}")
-        else:
-            logger.warning("No artifacts in result - briefing may not have been saved")
+        state_dir = Path(
+            os.getenv("STATE_DIR")
+            or os.getenv("MILTON_STATE_DIR")
+            or "/home/cole-hanan/milton"
+        )
+        output_dir = state_dir / "inbox" / "morning"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / f"nexus_{datetime.now().strftime('%Y-%m-%d')}.txt"
+        output_path.write_text(briefing, encoding="utf-8")
+        logger.info(f"✓ Briefing saved to: {output_path}")
 
         logger.info("="*60)
         logger.info("Morning briefing generation completed successfully")
