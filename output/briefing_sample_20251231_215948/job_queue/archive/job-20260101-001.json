@@ -1,0 +1,17 @@
+{
+  "artifacts": [
+    "outputs/sample_result.md"
+  ],
+  "completed_at": "2026-01-01T02:59:48.608022+00:00",
+  "created_at": "2026-01-01T02:59:48.536442+00:00",
+  "job_id": "job-20260101-001",
+  "payload": {
+    "task": "Summarize overnight results"
+  },
+  "priority": "medium",
+  "run_at": "2026-01-01T02:59:48.536442+00:00",
+  "status": "completed",
+  "task": "Summarize overnight results",
+  "type": "cortex_task",
+  "updated_at": "2026-01-01T02:59:48.608022+00:00"
+}

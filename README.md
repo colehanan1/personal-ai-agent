@@ -10,7 +10,7 @@
 
 ---
 
-## What is Milton?
+## Project Overview
 
 Milton is a **local-first AI agent system** that runs entirely on your hardware and **continuously improves** by learning from your conversations. Unlike ChatGPT or Claude, your data never leaves your machine, your conversations are remembered forever, every output is reproducible, and the AI gets smarter every week.
 
@@ -184,7 +184,7 @@ Optional: set `STATE_DIR` in `.env` to write goals/queue/inbox outside the repo 
 
 ---
 
-## Usage Examples
+## Usage
 
 ### Interactive Agent Chat
 
@@ -403,7 +403,11 @@ Milton will continuously evolve through a three-prong approach:
 
 ---
 
-## Click-to-Open Outputs
+## Output
+
+Consolidated repo artifacts live in `output/`. Runtime outputs can be redirected via `OUTPUT_DIR` (see `docs/ORCHESTRATOR_QUICKSTART.md`).
+
+### Click-to-Open Outputs
 
 Use Tailscale Serve + ntfy Click headers so tapping a notification opens the full Milton output on your iPhone. Run `scripts/setup_tailscale_serve_outputs.sh` once and set `OUTPUT_BASE_URL` as described in `docs/ORCHESTRATOR_QUICKSTART.md`.
 
@@ -444,7 +448,9 @@ If you prefer a local-network alternative, configure the SMB share in `docs/ORCH
 | Weaviate | 8080 | Vector database (HTTP) |
 | Weaviate gRPC | 50051 | Disabled (REST only) |
 
-### Directory Structure
+## Structure
+
+Key directories in the repo (with consolidated outputs in `output/`):
 
 ```
 milton/
@@ -464,7 +470,7 @@ milton/
 │   └── archive/         # Completed jobs
 ├── inbox/               # Agent outputs
 │   └── morning/         # Daily briefings
-├── outputs/             # Job results (gitignored)
+├── output/              # Consolidated job results
 ├── models/              # LLM weights (gitignored)
 └── docs/                # Documentation
 ```

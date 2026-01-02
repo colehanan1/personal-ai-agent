@@ -29,11 +29,14 @@ credentials.json
 # Logs
 /logs/
 *.log
+!cleanup.log
 
 # Runtime outputs
 /inbox/
 /outputs/
 /shared_outputs/
+**/output[0-9]*/
+**/~output/
 /memory/short-term/
 /memory/working/
 /memory/long-term/

@@ -1,0 +1,8 @@
+[2026-01-02 13:21:01] Starting cleanup in /home/cole-hanan/milton
+[2026-01-02 13:21:01] Merging /home/cole-hanan/milton/shared_outputs into /home/cole-hanan/milton/output
+[2026-01-02 13:21:01] Merging /home/cole-hanan/milton/outputs into /home/cole-hanan/milton/output
+[2026-01-02 13:21:01] Deduplicating files in /home/cole-hanan/milton/output
+[2026-01-02 13:21:01] Cleanup complete.
+[2026-01-02 13:26:49] Starting git optimization in /home/cole-hanan/milton
+[2026-01-02 13:26:49] Reflog expired
+[2026-01-02 13:26:50] Git GC complete
