@@ -28,6 +28,12 @@ from agents.tool_registry import (
 )
 from memory.retrieve import query_relevant
 from memory.schema import MemoryItem
+from phd_context import (
+    get_phd_context,
+    should_include_phd_context,
+    get_phd_summary_for_agent,
+    is_phd_related,
+)
 
 load_dotenv()
 
@@ -174,9 +180,15 @@ class NEXUS:
         logger.info("NEXUS agent initialized")
 
     def _load_system_prompt(self) -> str:
-        """Load NEXUS system prompt from Prompts folder."""
+        """Load NEXUS system prompt from Prompts folder with PhD context."""
         from agents import load_agent_context
-        return load_agent_context("NEXUS")
+        base_prompt = load_agent_context("NEXUS")
+
+        # Add PhD context to system prompt
+        phd_summary = get_phd_summary_for_agent()
+        enhanced_prompt = f"{base_prompt}\n\n{phd_summary}"
+
+        return enhanced_prompt
 
     def _call_llm(
         self,
@@ -235,6 +247,15 @@ class NEXUS:
             ),
             replace=True,
         )
+        self.register_tool(
+            ToolDefinition(
+                name="reminder",
+                description="Create, list, or cancel reminders",
+                keywords=("remind", "reminder", "alarm", "alert", "notification", "schedule"),
+                handler=self._tool_reminder,
+            ),
+            replace=True,
+        )
 
     def register_tool(self, tool: ToolDefinition, replace: bool = True) -> None:
         self.tool_registry.register(tool, replace=replace)
@@ -266,6 +287,128 @@ class NEXUS:
 
         return ToolResult(text="\n".join(lines), citations=citations)
 
+    def _tool_reminder(self, user_text: str) -> ToolResult:
+        """Handle reminder creation from natural language."""
+        try:
+            # Import here to avoid circular dependency
+            from pathlib import Path
+            import os
+            import re
+
+            # Dynamic imports to handle optional dependencies
+            try:
+                from milton_orchestrator.reminders import (
+                    ReminderStore,
+                    parse_time_expression,
+                    format_timestamp_local,
+                )
+            except ImportError:
+                return ToolResult(
+                    text="Reminders system not available. Install with: pip install dateparser pytz",
+                    citations=[],
+                )
+
+            # Get database path
+            state_dir = os.getenv("STATE_DIR", os.path.expanduser("~/.local/state/milton"))
+            db_path = Path(state_dir) / "reminders.sqlite3"
+
+            # Check for list command
+            if re.search(r'\b(list|show|view)\b.*\breminder', user_text, re.IGNORECASE):
+                store = ReminderStore(db_path)
+                reminders = store.list_reminders()
+                store.close()
+
+                if not reminders:
+                    return ToolResult(text="No active reminders.", citations=[])
+
+                lines = ["Active reminders:"]
+                for r in reminders:
+                    due_str = format_timestamp_local(r.due_at, r.timezone)
+                    lines.append(f"  {r.id}. {r.message} (due: {due_str})")
+
+                return ToolResult(text="\n".join(lines), citations=[])
+
+            # Check for cancel command
+            cancel_match = re.search(r'\b(cancel|delete|remove)\b.*\breminder\s+(\d+)', user_text, re.IGNORECASE)
+            if cancel_match:
+                reminder_id = int(cancel_match.group(2))
+                store = ReminderStore(db_path)
+                success = store.cancel_reminder(reminder_id)
+                store.close()
+
+                if success:
+                    return ToolResult(text=f"Reminder {reminder_id} canceled.", citations=[])
+                else:
+                    return ToolResult(text=f"Could not cancel reminder {reminder_id} (not found or already sent).", citations=[])
+
+            # Otherwise, try to create a reminder
+            # Extract time and message
+            # Patterns: "remind me to X at/in Y", "remind me at/in Y to X"
+            patterns = [
+                r'remind\s+(?:me\s+)?(?:to\s+)?(.+?)\s+(?:at|in)\s+(.+)',
+                r'remind\s+(?:me\s+)?(?:at|in)\s+(.+?)\s+(?:to\s+)?(.+)',
+            ]
+
+            message = None
+            time_expr = None
+
+            for pattern in patterns:
+                match = re.search(pattern, user_text, re.IGNORECASE)
+                if match:
+                    # Try both orderings
+                    msg1, time1 = match.groups()
+                    # Check which one looks more like a time expression
+                    if re.search(r'\d+\s*(m|h|hour|min|am|pm|:\d+)', time1, re.IGNORECASE):
+                        message = msg1.strip()
+                        time_expr = time1.strip()
+                    else:
+                        message = time1.strip()
+                        time_expr = msg1.strip()
+                    break
+
+            if not message or not time_expr:
+                # Fallback: try to find any time expression and use the rest as message
+                time_match = re.search(r'(?:in\s+\d+\s*\w+|at\s+\d+:\d+|tomorrow|next\s+\w+)', user_text, re.IGNORECASE)
+                if time_match:
+                    time_expr = time_match.group(0)
+                    # Use the rest as message
+                    message = user_text.replace(time_expr, '').replace('remind me', '').replace('to', '').strip()
+                else:
+                    return ToolResult(
+                        text="Could not parse reminder. Please specify both a message and a time (e.g., 'remind me to call Bob in 2 hours').",
+                        citations=[],
+                    )
+
+            # Parse the time
+            timezone = os.getenv("TZ", "America/New_York")
+            due_ts = parse_time_expression(time_expr, timezone=timezone)
+
+            if due_ts is None:
+                return ToolResult(
+                    text=f"Could not parse time expression: '{time_expr}'. Try formats like 'in 2 hours', 'tomorrow at 9am', or '2026-01-15 14:30'.",
+                    citations=[],
+                )
+
+            # Create the reminder
+            store = ReminderStore(db_path)
+            reminder_id = store.add_reminder(
+                kind="REMIND",
+                due_at=due_ts,
+                message=message,
+                timezone=timezone,
+            )
+            store.close()
+
+            due_formatted = format_timestamp_local(due_ts, timezone)
+            return ToolResult(
+                text=f"✓ Reminder set (ID: {reminder_id})\n  Message: {message}\n  Due: {due_formatted}",
+                citations=[],
+            )
+
+        except Exception as exc:
+            logger.error(f"Reminder tool error: {exc}", exc_info=True)
+            return ToolResult(text=f"Error creating reminder: {exc}", citations=[])
+
     def _parse_max_results(self, text: str, default: int = 3) -> int:
         match = re.search(r"\b(\d{1,2})\b", text)
         if match:
@@ -285,8 +428,16 @@ class NEXUS:
                 assumptions=[],
             )
 
+        # PhD-aware context building
         limit = int(os.getenv("MILTON_MEMORY_CONTEXT_LIMIT", "8"))
-        recency_bias = float(os.getenv("MILTON_MEMORY_RECENCY_BIAS", "0.35"))
+
+        # If PhD-related, prioritize PhD memories with lower recency bias
+        if should_include_phd_context(user_text):
+            recency_bias = float(os.getenv("MILTON_PHD_MEMORY_RECENCY_BIAS", "0.2"))
+            limit = int(os.getenv("MILTON_PHD_MEMORY_CONTEXT_LIMIT", "12"))
+        else:
+            recency_bias = float(os.getenv("MILTON_MEMORY_RECENCY_BIAS", "0.35"))
+
         max_chars = int(os.getenv("MILTON_MEMORY_CONTEXT_MAX_CHARS", str(budget_tokens * 4)))
 
         memories = query_relevant(
@@ -313,6 +464,25 @@ class NEXUS:
             unknowns.append("No evidence-backed memory available for this request.")
 
         assumptions = ["Assume request is self-contained unless clarified."]
+
+        # Add PhD context if relevant
+        if should_include_phd_context(user_text):
+            phd_ctx = get_phd_context(user_text, limit=5)
+
+            # Add PhD bullets
+            if phd_ctx.get("current_projects"):
+                for proj in phd_ctx["current_projects"][:2]:
+                    bullets.append(ContextBullet(
+                        text=f"PhD Project: {proj[:200]}",
+                        evidence_ids=["phd-profile"]
+                    ))
+
+            if phd_ctx.get("immediate_steps"):
+                steps_text = "; ".join(phd_ctx["immediate_steps"][:3])
+                bullets.append(ContextBullet(
+                    text=f"PhD Immediate Steps: {steps_text[:200]}",
+                    evidence_ids=["phd-profile"]
+                ))
 
         return ContextPacket(
             query=user_text,
@@ -598,12 +768,20 @@ class NEXUS:
                 "and confirm LLM_API_URL is reachable."
             )
 
+        # Tag memory with PhD if relevant
+        tags = ["request", f"route:{route_label}"]
+        importance = 0.2
+
+        if is_phd_related(message):
+            tags.extend(["phd", "research"])
+            importance = 0.4  # Higher importance for PhD-related messages
+
         record_memory(
             "NEXUS",
             message,
             memory_type="crumb",
-            tags=["request", f"route:{route_label}"],
-            importance=0.2,
+            tags=tags,
+            importance=importance,
             source="user",
         )
         if should_store_responses():

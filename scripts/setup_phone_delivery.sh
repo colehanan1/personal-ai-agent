@@ -38,7 +38,7 @@ echo "Updating systemd service to send notifications..."
 
 cat > "$SERVICE_FILE" << 'EOF'
 [Unit]
-Description=Milton Enhanced Morning Briefing
+Description=Milton PhD-Aware Morning Briefing
 After=network-online.target
 Wants=network-online.target
 
@@ -46,7 +46,7 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/home/cole-hanan/milton
 Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
-ExecStart=/bin/bash -c '/home/cole-hanan/milton/scripts/enhanced_morning_briefing.py && /home/cole-hanan/milton/scripts/send_briefing_to_phone.py --method ntfy'
+ExecStart=/bin/bash -c '/home/cole-hanan/milton/scripts/phd_aware_morning_briefing.py && /home/cole-hanan/milton/scripts/send_briefing_to_phone.py --method ntfy'
 StandardOutput=journal
 StandardError=journal
 TimeoutStartSec=300

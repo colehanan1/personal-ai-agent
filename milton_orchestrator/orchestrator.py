@@ -90,13 +90,19 @@ class Orchestrator:
         self.reminder_scheduler = None
         if config.enable_reminders:
             self.reminder_store = ReminderStore(config.state_dir / "reminders.sqlite3")
+
+            def reminder_publish_fn(message: str, title: str, reminder_id: int) -> bool:
+                """Publish reminder via ntfy."""
+                return self.ntfy_client.publish(
+                    self.config.answer_topic,
+                    truncate_text(message, max_chars=self.config.ntfy_max_chars),
+                    title=title,
+                    priority=4,
+                )
+
             self.reminder_scheduler = ReminderScheduler(
                 store=self.reminder_store,
-                publish_fn=lambda msg: self.ntfy_client.publish(
-                    self.config.answer_topic,
-                    truncate_text(msg, max_chars=self.config.ntfy_max_chars),
-                    title="Reminder",
-                ),
+                publish_fn=reminder_publish_fn,
                 interval_seconds=5,
             )
             self.reminder_scheduler.start()

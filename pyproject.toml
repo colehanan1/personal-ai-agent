@@ -30,6 +30,7 @@ dev = [
 
 [project.scripts]
 milton-orchestrator = "milton_orchestrator.cli:main"
+milton-reminders = "milton_orchestrator.reminders_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

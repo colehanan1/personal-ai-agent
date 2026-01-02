@@ -23,6 +23,10 @@ pydantic-settings>=2.0.0
 python-dotenv>=1.0.0
 pyyaml>=6.0
 
+# Reminders - Time parsing and timezone support
+dateparser>=1.2.0
+pytz>=2024.1
+
 # Optional but Recommended (for data analysis)
 numpy>=2.0.0
 pandas>=2.0.0

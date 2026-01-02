@@ -260,6 +260,31 @@ with MemoryOperations() as mem:
 
 ## Key Features
 
+### ⏰ Reminders + Notifications (NEW!)
+
+**Milton now includes a first-class reminders system:**
+- 🔔 **Persistent reminders** stored in SQLite (survive restarts)
+- 📱 **Push notifications** via ntfy (works on iOS/Android)
+- 🌍 **Timezone-aware** scheduling (America/New_York by default)
+- 💬 **Natural language** parsing ("tomorrow at 9am", "in 2 hours")
+- 🔁 **Automatic retries** with exponential backoff
+- 🎯 **Multiple interfaces** - CLI, NEXUS agent, or orchestrator
+
+**Quick example:**
+```bash
+# Terminal 1: Start scheduler
+milton-reminders run
+
+# Terminal 2: Create reminders
+milton-reminders add "Team standup" --when "tomorrow at 9am"
+milton-reminders add "Check build" --when "in 30 minutes"
+
+# Or ask NEXUS
+"remind me to call Bob in 2 hours"
+```
+
+**See [docs/reminders.md](docs/reminders.md) for complete setup guide.**
+
 ### 🔒 Privacy-First (Local Execution)
 
 **All inference runs on your hardware:**
@@ -389,6 +414,9 @@ Milton will continuously evolve through a three-prong approach:
 - **[Current System State](docs/02-current-state.md)** - Gap analysis and implementation status
 - **[90-Day Roadmap](docs/03-roadmap.md)** - Detailed implementation plan
 - **[Technical Architecture](docs/04-architecture.md)** - System design, data flow, and integration
+
+### Features & Capabilities
+- **[Reminders System](docs/reminders.md)** - Persistent reminders + push notifications via ntfy (NEW!)
 
 ### Current System (Phase 2)
 - **[Phase 2 Deployment Guide](docs/PHASE2_DEPLOYMENT.md)** - Step-by-step setup instructions

@@ -1,0 +1,36 @@
+[Unit]
+Description=Milton Reminders Scheduler
+Documentation=https://github.com/colehanan1/milton/blob/main/docs/reminders.md
+After=network.target
+
+[Service]
+Type=simple
+
+# Environment configuration
+# IMPORTANT: Update these values for your setup
+Environment="NTFY_TOPIC=milton-reminders-cole"
+Environment="NTFY_BASE_URL=https://ntfy.sh"
+Environment="TZ=America/New_York"
+Environment="STATE_DIR=/home/cole-hanan/.local/state/milton"
+
+# Optional: ntfy authentication token
+# Environment="NTFY_TOKEN=tk_yourtoken"
+
+# Path to milton-reminders executable
+# Update this path to match your conda environment
+ExecStart=/home/cole-hanan/miniconda3/envs/milton/bin/milton-reminders run
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+# Security hardening (optional)
+# NoNewPrivileges=true
+# PrivateTmp=true
+
+[Install]
+WantedBy=default.target

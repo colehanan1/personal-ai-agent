@@ -14,7 +14,7 @@ mkdir -p "$SYSTEMD_DIR"
 echo "Creating systemd service..."
 cat > "$SYSTEMD_DIR/milton-morning-briefing.service" << 'EOF'
 [Unit]
-Description=Milton Enhanced Morning Briefing
+Description=Milton PhD-Aware Morning Briefing
 After=network-online.target
 Wants=network-online.target
 
@@ -22,7 +22,7 @@ Wants=network-online.target
 Type=oneshot
 WorkingDirectory=/home/cole-hanan/milton
 Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
-ExecStart=/home/cole-hanan/milton/scripts/enhanced_morning_briefing.py
+ExecStart=/home/cole-hanan/milton/scripts/phd_aware_morning_briefing.py
 StandardOutput=journal
 StandardError=journal
 TimeoutStartSec=300
@@ -65,7 +65,7 @@ echo "  Check timer status:  systemctl --user list-timers milton*"
 echo "  Run now:             systemctl --user start milton-morning-briefing.service"
 echo "  View logs:           journalctl --user -u milton-morning-briefing.service"
 echo "  Disable:             systemctl --user disable milton-morning-briefing.timer"
-echo "  Manual run:          ./scripts/enhanced_morning_briefing.py"
+echo "  Manual run:          ./scripts/phd_aware_morning_briefing.py"
 echo ""
 echo "BRIEFING LOCATION:"
 echo "  inbox/morning/enhanced_brief_latest.json"
