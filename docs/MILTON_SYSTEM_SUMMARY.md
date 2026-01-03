@@ -230,7 +230,7 @@ Major subsystems and data flow:
 | --- | --- | --- | --- | --- |
 | vLLM server | Local inference for all agents | `scripts/start_vllm.py`, `LLM_API_URL`, `LLM_MODEL` | Agents return "LLM unavailable" if endpoint is down | `scripts/start_vllm.py`, `agents/nexus.py`, `README.md` |
 | Weaviate | Memory store | `docker-compose.yml`, `WEAVIATE_URL` | JSONL fallback used when Weaviate is down | `docker-compose.yml`, `memory/backends.py` |
-| OpenWeather | Weather in briefings/tool | Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. `WEATHER_LOCATION` | Raises error if key missing | `integrations/weather.py`, `docs/MORNING_BRIEFING_GUIDE.md` |
+| OpenWeather | Weather in briefings/tool | Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. `WEATHER_LAT`, `WEATHER_LON` (preferred), `WEATHER_LOCATION` fallback | Raises error if key missing | `integrations/weather.py`, `docs/MORNING_BRIEFING_GUIDE.md` |
 | NewsAPI | News in briefings/frontier | `NEWS_API_KEY` | 401 if key missing | `integrations/news_api.py`, `docs/ERROR_SUMMARY.md` |
 | arXiv | Paper search | No key required | Network errors | `integrations/arxiv_api.py`, `agents/frontier.py` |
 | Home Assistant | Home status integration | `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN` | Connection refused if service not running | `integrations/home_assistant.py`, `docs/IMPLEMENTATION_PLAN.md`, `docs/ERROR_SUMMARY.md` |
@@ -435,7 +435,9 @@ milton/
 | NTFY_TOKEN | Reminders ntfy auth token | `REMINDERS_IMPLEMENTATION_SUMMARY.md` |
 | TZ | Timezone for reminders | `docs/reminders.md` |
 | WEATHER_API_KEY | Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. | `docs/MORNING_BRIEFING_GUIDE.md`, `docs/IMPLEMENTATION_PLAN.md` |
-| WEATHER_LOCATION | Weather location | `docs/MORNING_BRIEFING_GUIDE.md`, `docs/IMPLEMENTATION_PLAN.md` |
+| WEATHER_LAT | Weather latitude | `docs/MORNING_BRIEFING_GUIDE.md`, `docs/IMPLEMENTATION_PLAN.md` |
+| WEATHER_LON | Weather longitude | `docs/MORNING_BRIEFING_GUIDE.md`, `docs/IMPLEMENTATION_PLAN.md` |
+| WEATHER_LOCATION | Weather location fallback | `docs/MORNING_BRIEFING_GUIDE.md`, `docs/IMPLEMENTATION_PLAN.md` |
 | OPENWEATHER_API_KEY | Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. | `docs/02-current-state.md` |
 | NEWS_API_KEY | News API key | `docs/02-current-state.md`, `docs/ERROR_SUMMARY.md`, `docs/IMPLEMENTATION_PLAN.md` |
 | HOME_ASSISTANT_URL | Home Assistant base URL | `docs/IMPLEMENTATION_PLAN.md` |

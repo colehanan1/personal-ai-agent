@@ -1,5 +1,6 @@
 [Unit]
 Description=Milton Phone Question Listener (ntfy)
+Documentation=file:///home/cole-hanan/milton/docs/ASK_MILTON_FROM_IPHONE.md
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=120
@@ -9,6 +10,7 @@ StartLimitBurst=6
 Type=simple
 WorkingDirectory=/home/cole-hanan/milton
 Environment="STATE_DIR=%h/.local/state/milton"
+Environment="PHONE_LISTENER_DRY_RUN=false"
 EnvironmentFile=/home/cole-hanan/milton/.env
 Environment="PATH=/home/cole-hanan/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
 ExecStart=/home/cole-hanan/milton/scripts/ask_from_phone.py --listen
@@ -16,10 +18,55 @@ Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=milton-phone-listener
 
 # Security hardening
+# Prevent privilege escalation
 NoNewPrivileges=true
+
+# Filesystem protection
 PrivateTmp=true
+ProtectHome=false
+ProtectSystem=strict
+ReadWritePaths=%h/.local/state/milton
+
+# Network access (required for ntfy and NEXUS)
+PrivateNetwork=false
+
+# Restrict system calls
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+# Capabilities (drop all)
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Restrict access to /proc and /sys
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+
+# Restrict realtime
+RestrictRealtime=true
+
+# Lock personality
+LockPersonality=true
+
+# Restrict address families to IPv4 and IPv6
+RestrictAddressFamilies=AF_INET AF_INET6
+
+# Memory protection
+MemoryDenyWriteExecute=true
+
+# Restrict namespaces
+RestrictNamespaces=true
+
+# Remove access to some device nodes
+PrivateDevices=true
 
 [Install]
 WantedBy=default.target

@@ -351,12 +351,31 @@ def mark_failed(
     base_dir: Optional[Path] = None,
     now: Optional[datetime] = None,
 ) -> dict[str, Any]:
+    """
+    Mark a job as failed and archive it.
+
+    Failed jobs are moved to archive/ to ensure idempotent processing
+    (reruns don't reprocess failed jobs).
+
+    Args:
+        job_id: Job identifier
+        error: Error message or exception
+        base_dir: Base directory for queue
+        now: Current timestamp
+
+    Returns:
+        Updated job record
+
+    Raises:
+        ValueError: If job_id is empty
+        FileNotFoundError: If job not found in queue
+    """
     if not job_id:
         raise ValueError("job_id is required")
 
     base = _state_dir(base_dir)
     timestamp = _now_utc(now)
-    tonight_dir, _archive_dir = _queue_dirs(base)
+    tonight_dir, archive_dir = _queue_dirs(base)
     path = _job_file_path(tonight_dir, job_id)
 
     with _locked_file(path, mode="r+") as handle:
@@ -372,7 +391,13 @@ def mark_failed(
         record["updated_at"] = timestamp.isoformat()
         record["error"] = str(error)
         _append_event(record, "failed", timestamp, {"error": str(error)})
-        _write_job_handle(handle, record)
 
-    logger.debug("Failed job %s", job_id)
+        # Archive failed job (same as completed jobs)
+        # This ensures idempotency: reruns won't reprocess failed jobs
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = _job_file_path(archive_dir, job_id)
+        _write_job(archive_path, record)
+        path.unlink(missing_ok=True)
+
+    logger.debug("Failed and archived job %s", job_id)
     return record

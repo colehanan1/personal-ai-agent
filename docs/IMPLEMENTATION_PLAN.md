@@ -391,7 +391,9 @@ milton/
 # Current
 # Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility.
 OPENWEATHER_API_KEY=187253855972163c4881236674f973d8
-WEATHER_LOCATION=St. Louis,US
+WEATHER_LAT=38.6270
+WEATHER_LON=-90.1994
+WEATHER_LOCATION=St. Louis,US  # Optional fallback (city, country or "lat,lon")
 
 # Need to Add
 LLM_API_URL=http://localhost:8000     # vLLM default (production)

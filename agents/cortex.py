@@ -3,7 +3,7 @@ CORTEX - Execution Agent
 Handles task execution, code generation, and overnight job processing.
 """
 import requests
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import os
 import json
 import subprocess
@@ -16,6 +16,17 @@ from agents.memory_hooks import (
     record_memory,
     should_store_responses,
 )
+from agents.contracts import (
+    TaskRequest,
+    TaskPlan,
+    TaskStep,
+    TaskResult,
+    TaskStatus,
+    AgentReport,
+    generate_task_id,
+    generate_iso_timestamp,
+)
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -131,32 +142,44 @@ class CORTEX:
             logger.error(f"LLM API error: {e}")
             raise
 
-    def generate_plan(self, user_request: str) -> Dict[str, Any]:
+    def generate_plan(self, user_request: Union[str, TaskRequest]) -> TaskPlan:
         """
         Generate execution plan for user request.
 
         Args:
-            user_request: Task description from user
+            user_request: Task description string or TaskRequest object
 
         Returns:
-            Work plan as JSON with steps, dependencies, and estimated complexity
+            TaskPlan object with validated steps and metadata
 
         Example:
             >>> cortex = CORTEX()
             >>> plan = cortex.generate_plan("Analyze fMRI data and generate report")
-            >>> print(plan["steps"])
+            >>> print(plan.steps)
         """
+        # Handle both string and TaskRequest inputs for backward compatibility
+        if isinstance(user_request, TaskRequest):
+            task_id = user_request.task_id
+            description = user_request.task_description
+        else:
+            task_id = generate_task_id("cortex")
+            description = user_request
+
         prompt = f"""
 Generate a detailed execution plan for the following task:
 
-Task: {user_request}
+Task: {description}
 
 Provide a JSON work plan with:
-1. Steps (numbered, actionable)
-2. Dependencies between steps
-3. Required tools/integrations
-4. Estimated complexity (low, medium, high)
-5. Success criteria
+1. Steps (numbered, actionable) - each step must have:
+   - step_number (int, starting from 1)
+   - action (string, clear description)
+   - dependencies (list of step numbers that must complete first)
+   - estimated_complexity (low/medium/high)
+   - success_criteria (string, how to verify completion)
+2. overall_complexity (low/medium/high)
+3. required_tools (list of tool names)
+4. estimated_duration (optional human-readable string)
 
 Format as valid JSON.
 """
@@ -168,13 +191,59 @@ Format as valid JSON.
             json_start = response.find("{")
             json_end = response.rfind("}") + 1
             plan_json = response[json_start:json_end]
-            plan = json.loads(plan_json)
+            plan_data = json.loads(plan_json)
+
+            # Convert to TaskPlan format
+            steps = []
+            for step_data in plan_data.get("steps", []):
+                step = TaskStep(
+                    step_number=step_data.get("step_number", step_data.get("step", len(steps) + 1)),
+                    action=step_data.get("action", ""),
+                    dependencies=step_data.get("dependencies", []),
+                    estimated_complexity=step_data.get("estimated_complexity", "medium"),
+                    success_criteria=step_data.get("success_criteria", ""),
+                )
+                steps.append(step)
+
+            # If no steps parsed, create a fallback single step
+            if not steps:
+                steps = [
+                    TaskStep(
+                        step_number=1,
+                        action=description,
+                        estimated_complexity="medium",
+                        success_criteria="Task completed successfully",
+                    )
+                ]
+
+            plan = TaskPlan(
+                task_id=task_id,
+                created_at=generate_iso_timestamp(),
+                agent="cortex",
+                steps=steps,
+                overall_complexity=plan_data.get("overall_complexity", plan_data.get("complexity", "medium")),
+                required_tools=plan_data.get("required_tools", []),
+                estimated_duration=plan_data.get("estimated_duration", ""),
+            )
+
         except Exception as e:
             logger.error(f"Failed to parse plan: {e}")
-            plan = {
-                "steps": [{"step": 1, "action": user_request}],
-                "complexity": "unknown",
-            }
+            # Create fallback plan
+            plan = TaskPlan(
+                task_id=task_id,
+                created_at=generate_iso_timestamp(),
+                agent="cortex",
+                steps=[
+                    TaskStep(
+                        step_number=1,
+                        action=description,
+                        estimated_complexity="medium",
+                        success_criteria="Task completed successfully",
+                    )
+                ],
+                overall_complexity="medium",
+                required_tools=[],
+            )
 
         return plan
 
@@ -319,43 +388,74 @@ Format as a clear, readable report.
 
         return report
 
-    def process_overnight_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
+    def process_overnight_job(self, job: Dict[str, Any]) -> TaskResult:
         """
         Process an overnight job from the queue.
 
         Args:
-            job: Job specification
+            job: Job specification dict with 'id' and 'task' fields
 
         Returns:
-            Job execution result
+            TaskResult object with execution details
+
+        Example:
+            >>> job = {"id": "job_001", "task": "Analyze logs and generate report"}
+            >>> result = cortex.process_overnight_job(job)
+            >>> print(result.status)
         """
-        logger.info(f"Processing overnight job: {job.get('id', 'unknown')}")
+        job_id = job.get("id", generate_task_id("job"))
+        task_desc = job.get("task", "")
 
-        # Generate plan
-        plan = self.generate_plan(job["task"])
+        logger.info(f"Processing overnight job: {job_id}")
 
-        # Execute steps
-        context = {}
-        results = []
+        try:
+            # Generate plan
+            plan = self.generate_plan(task_desc)
 
-        for step in plan.get("steps", []):
-            result = self.execute_step(step, context)
-            results.append(result)
+            # Execute steps
+            context = {}
+            results = []
 
-            # Update context with result
-            context[f"step_{step.get('step', len(results))}"] = result
+            for step in plan.steps:
+                step_result = self.execute_step(step.to_dict(), context)
+                results.append(step_result)
 
-        # Generate report
-        report = self.generate_report(results)
+                # Update context with result
+                context[f"step_{step.step_number}"] = step_result
 
-        return {
-            "job_id": job.get("id"),
-            "task": job["task"],
-            "plan": plan,
-            "results": results,
-            "report": report,
-            "completed_at": datetime.now().isoformat(),
-        }
+            # Generate report
+            report_text = self.generate_report(results)
+
+            # Create successful result
+            result = TaskResult(
+                task_id=job_id,
+                completed_at=generate_iso_timestamp(),
+                agent="cortex",
+                status=TaskStatus.COMPLETED,
+                output=report_text,
+                output_paths=[],
+                evidence_refs=[],
+                metadata={
+                    "plan": plan.to_dict(),
+                    "step_count": len(results),
+                    "job_data": job,
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Job execution failed: {e}", exc_info=True)
+            # Create failed result
+            result = TaskResult(
+                task_id=job_id,
+                completed_at=generate_iso_timestamp(),
+                agent="cortex",
+                status=TaskStatus.FAILED,
+                output="",
+                error_message=str(e),
+                metadata={"job_data": job},
+            )
+
+        return result
 
 
 if __name__ == "__main__":

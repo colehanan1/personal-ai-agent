@@ -22,6 +22,13 @@ from agents.memory_hooks import (
     record_memory,
     should_store_responses,
 )
+from agents.contracts import (
+    DiscoveryResult,
+    AgentReport,
+    generate_task_id,
+    generate_iso_timestamp,
+)
+from agents.frontier_cache import get_discovery_cache
 
 load_dotenv()
 
@@ -366,35 +373,246 @@ Provide a 2-3 sentence overview of the main trends and breakthroughs.
 
         return articles[:max_articles]
 
-    def daily_discovery(self) -> Dict[str, Any]:
+    def find_papers_cached(
+        self,
+        research_topic: str,
+        max_results: int = 10,
+        categories: Optional[List[str]] = None,
+        use_cache: bool = True,
+    ) -> List[Dict[str, Any]]:
         """
-        Run daily discovery routine.
+        Find papers on arXiv with caching support.
+
+        This method uses a TTL-based cache to provide:
+        - Deterministic results (same query returns cached results within TTL)
+        - Reduced API calls (local-first principle)
+        - Offline capability (works with cached data)
+
+        Args:
+            research_topic: Research topic or keywords
+            max_results: Maximum number of papers
+            categories: arXiv categories to search (optional)
+            use_cache: Whether to use cache (default: True)
 
         Returns:
-            Discovery results with papers and news
+            List of papers with timestamps
+
+        Example:
+            >>> frontier = FRONTIER()
+            >>> papers = frontier.find_papers_cached("fMRI", max_results=5)
+        """
+        cache = get_discovery_cache()
+
+        # Check cache first
+        if use_cache:
+            params = {"max_results": max_results, "categories": categories or []}
+            cached_papers = cache.get("arxiv", research_topic, params)
+
+            if cached_papers is not None:
+                logger.info(f"Using cached results for arXiv query: {research_topic}")
+                return cached_papers
+
+        # Cache miss or disabled - fetch from API
+        logger.info(f"Fetching fresh results from arXiv: {research_topic}")
+        papers = self.find_papers(research_topic, max_results, categories)
+
+        # Add retrieval timestamp to each paper
+        now = generate_iso_timestamp()
+        for paper in papers:
+            paper["retrieved_at"] = now
+
+        # Cache results
+        if use_cache and papers:
+            params = {"max_results": max_results, "categories": categories or []}
+            cache.set("arxiv", research_topic, papers, params)
+
+        return papers
+
+    def monitor_ai_news_cached(
+        self,
+        max_articles: int = 10,
+        use_cache: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """
+        Monitor AI/ML news with caching support.
+
+        Note: This is optional and gracefully degrades if NEWS_API_KEY is not set.
+
+        Args:
+            max_articles: Maximum number of articles
+            use_cache: Whether to use cache (default: True)
+
+        Returns:
+            List of news articles (empty if API key not configured)
+
+        Example:
+            >>> frontier = FRONTIER()
+            >>> news = frontier.monitor_ai_news_cached(max_articles=5)
+            >>> # Returns cached results if available, else fetches (if API key set)
+        """
+        cache = get_discovery_cache()
+
+        # Check cache first
+        if use_cache:
+            params = {"max_articles": max_articles}
+            cached_news = cache.get("news", "ai_ml_news", params)
+
+            if cached_news is not None:
+                logger.info("Using cached AI/ML news")
+                return cached_news
+
+        # Cache miss or disabled - check if API key is available
+        if not self.news.api_key:
+            logger.warning("NEWS_API_KEY not set - skipping news fetch (graceful degradation)")
+            return []
+
+        # Fetch from API
+        try:
+            logger.info("Fetching fresh AI/ML news")
+            articles = self.monitor_ai_news(max_articles)
+
+            # Add retrieval timestamp
+            now = generate_iso_timestamp()
+            for article in articles:
+                article["retrieved_at"] = now
+
+            # Cache results
+            if use_cache and articles:
+                params = {"max_articles": max_articles}
+                cache.set("news", "ai_ml_news", articles, params)
+
+            return articles
+
+        except Exception as e:
+            logger.error(f"News fetch failed: {e} - returning empty list")
+            return []
+
+    def daily_discovery(self) -> DiscoveryResult:
+        """
+        Run daily discovery routine with caching.
+
+        Uses cached discovery methods to provide deterministic results
+        and reduce external API calls. Returns structured DiscoveryResult
+        with findings, citations, and source timestamps.
+
+        Returns:
+            DiscoveryResult object with papers, news, findings, and metadata
+
+        Example:
+            >>> frontier = FRONTIER()
+            >>> result = frontier.daily_discovery()
+            >>> print(f"Found {len(result.papers)} papers")
+            >>> print(f"Confidence: {result.confidence}")
         """
         logger.info("Running daily discovery routine")
 
-        # Get papers for interests
-        papers_by_interest = self.get_recent_papers_by_interest(days=1, max_per_interest=3)
+        task_id = generate_task_id("discovery")
+        now = generate_iso_timestamp()
 
-        # Flatten to single list
+        # Use cached discovery methods
         all_papers = []
-        for papers in papers_by_interest.values():
+        source_timestamps = {}
+
+        # Get papers for each research interest (with caching)
+        for interest in self.research_interests:
+            papers = self.find_papers_cached(interest, max_results=3, use_cache=True)
             all_papers.extend(papers)
 
-        # Generate brief
+            # Extract timestamp from first paper in this batch
+            if papers and "retrieved_at" in papers[0]:
+                source_timestamps[f"arxiv_{interest}"] = papers[0]["retrieved_at"]
+
+        # Get AI news (with caching and graceful degradation)
+        news = self.monitor_ai_news_cached(max_articles=5, use_cache=True)
+        if news and "retrieved_at" in news[0]:
+            source_timestamps["news"] = news[0]["retrieved_at"]
+
+        # Extract citations from papers
+        citations = []
+        for paper in all_papers:
+            arxiv_id = paper.get("id") or paper.get("arxiv_id")
+            if arxiv_id:
+                citations.append(f"arxiv:{arxiv_id}")
+            pdf_url = paper.get("pdf_url")
+            if pdf_url:
+                citations.append(pdf_url)
+
+        # Add news URLs to citations
+        for article in news:
+            url = article.get("url")
+            if url:
+                citations.append(url)
+
+        # Generate findings (bullet points)
+        findings = []
+
+        # Group papers by interest for findings
+        papers_by_interest = {}
+        for interest in self.research_interests:
+            interest_papers = [
+                p for p in all_papers
+                if interest.lower() in p.get("title", "").lower()
+                or interest.lower() in p.get("abstract", "").lower()
+            ]
+            if interest_papers:
+                papers_by_interest[interest] = interest_papers
+
+        for interest, papers in papers_by_interest.items():
+            if papers:
+                findings.append(
+                    f"{len(papers)} new paper(s) on {interest}: {papers[0].get('title', 'Untitled')[:60]}..."
+                )
+
+        if news:
+            findings.append(f"{len(news)} AI/ML news article(s) retrieved")
+
+        # Calculate confidence based on data quality
+        confidence = "high"
+        if len(all_papers) == 0 and len(news) == 0:
+            confidence = "low"
+        elif len(all_papers) < 3:
+            confidence = "medium"
+
+        # Build summary
+        summary = (
+            f"Discovered {len(all_papers)} papers and {len(news)} news items "
+            f"for research interests: {', '.join(self.research_interests[:3])}"
+        )
+
+        # Generate brief (saves to file)
         brief = self.generate_research_brief(all_papers, topic="Daily Discovery")
 
-        # Get AI news
-        news = self.monitor_ai_news(max_articles=5)
+        # Extract output path from brief generation
+        # (generate_research_brief saves to STATE_DIR/outputs/)
+        output_path = ""  # Will be set if we track the saved file
 
-        return {
-            "papers": all_papers,
-            "news": news,
-            "brief": brief,
-            "timestamp": datetime.now().isoformat(),
+        # Build metadata
+        metadata = {
+            "research_interests": self.research_interests,
+            "total_sources": len(source_timestamps),
+            "cache_enabled": True,
+            "news_api_configured": bool(self.news.api_key),
         }
+
+        # Create discovery result
+        result = DiscoveryResult(
+            task_id=task_id,
+            completed_at=now,
+            agent="frontier",
+            query="Daily Discovery",
+            summary=summary,
+            findings=findings,
+            citations=citations,
+            source_timestamps=source_timestamps,
+            confidence=confidence,
+            papers=all_papers,
+            news_items=news,
+            output_path=output_path,
+            metadata=metadata,
+        )
+
+        logger.info(f"Discovery complete: {len(all_papers)} papers, {len(news)} news, confidence={confidence}")
+        return result
 
 
 if __name__ == "__main__":

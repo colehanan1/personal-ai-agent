@@ -26,6 +26,12 @@ from agents.tool_registry import (
     ToolResult,
     get_tool_registry,
 )
+from agents.contracts import (
+    TaskRequest,
+    TaskPriority,
+    generate_task_id,
+    generate_iso_timestamp,
+)
 from memory.retrieve import query_relevant
 from memory.schema import MemoryItem
 from milton_orchestrator.state_paths import resolve_state_dir

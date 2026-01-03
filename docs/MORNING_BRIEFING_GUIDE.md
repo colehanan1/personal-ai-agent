@@ -88,8 +88,12 @@ systemctl --user restart milton-morning-briefing.timer
 ```
 
 ### Change the Location
-The briefing location is set in your `.env` file:
+The briefing location is set in your `.env` file (lat/lon preferred):
 ```bash
+WEATHER_LAT=38.6270
+WEATHER_LON=-90.1994
+
+# Optional fallback (city, country or "lat,lon")
 WEATHER_LOCATION=St. Louis,US
 ```
 
