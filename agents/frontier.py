@@ -3,7 +3,7 @@ FRONTIER - Discovery Agent
 Monitors research feeds, discovers papers, and generates research briefs.
 """
 import requests
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import os
 import json
 from datetime import datetime
@@ -258,7 +258,7 @@ Format as JSON.
         papers: List[Dict[str, Any]],
         topic: Optional[str] = None,
         include_analysis: bool = False,
-    ) -> str:
+    ) -> Tuple[str, str]:
         """
         Generate research brief from papers.
 
@@ -268,7 +268,7 @@ Format as JSON.
             include_analysis: Whether to include LLM analysis
 
         Returns:
-            Formatted research brief
+            Tuple of (formatted research brief, saved file path if write succeeded)
         """
         logger.info(f"Generating research brief for {len(papers)} papers")
 
@@ -336,15 +336,18 @@ Provide a 2-3 sentence overview of the main trends and breakthroughs.
             f"research_brief_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         )
 
+        saved_path: str = ""
+
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with output_path.open("w") as f:
                 f.write(brief)
             logger.info(f"Research brief saved to {output_path}")
+            saved_path = str(output_path)
         except Exception as e:
             logger.error(f"Failed to save brief: {e}")
 
-        return brief
+        return brief, saved_path
 
     def monitor_ai_news(self, max_articles: int = 10) -> List[Dict[str, Any]]:
         """
@@ -580,11 +583,7 @@ Provide a 2-3 sentence overview of the main trends and breakthroughs.
         )
 
         # Generate brief (saves to file)
-        brief = self.generate_research_brief(all_papers, topic="Daily Discovery")
-
-        # Extract output path from brief generation
-        # (generate_research_brief saves to STATE_DIR/outputs/)
-        output_path = ""  # Will be set if we track the saved file
+        brief, output_path = self.generate_research_brief(all_papers, topic="Daily Discovery")
 
         # Build metadata
         metadata = {

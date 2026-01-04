@@ -324,9 +324,9 @@ WEAVIATE_URL=http://localhost:8080
 # Integrations
 # Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility.
 OPENWEATHER_API_KEY=***
-WEATHER_LAT=38.6270
-WEATHER_LON=-90.1994
-WEATHER_LOCATION=St. Louis,US  # Optional fallback (city, country or "lat,lon")
+WEATHER_LAT=YOUR_LATITUDE      # Example placeholder; set to your location if using coordinates
+WEATHER_LON=YOUR_LONGITUDE     # Example placeholder; set to your location if using coordinates
+WEATHER_LOCATION=City,Country  # Optional fallback (city, country or "lat,lon"; customize as needed)
 NEWS_API_KEY=***
 NTFY_SERVER=https://ntfy.sh
 ```

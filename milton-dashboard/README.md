@@ -35,31 +35,39 @@ Real-time monitoring dashboard for the Milton 3-agent AI system (NEXUS/CORTEX/FR
 
 - **Node.js**: v18.0.0 or higher
 - **npm**: v9.0.0 or higher
+- **Python**: 3.12+ with Milton environment
 - **Milton Backend**: Running at `http://localhost:8001`
 
 ### Setup Steps
 
 ```bash
-# 1. Navigate to the dashboard directory
+# 1. Start the Milton API server (in terminal 1)
+cd /home/cole-hanan/milton
+conda activate milton
+python scripts/start_api_server.py
+
+# 2. Navigate to the dashboard directory (in terminal 2)
 cd /home/cole-hanan/milton/milton-dashboard
 
-# 2. Install dependencies
+# 3. Install dependencies
 npm install
 
-# 3. Create environment file
+# 4. Create environment file
 cp .env.example .env
 
-# 4. (Optional) Edit .env to customize API URL
+# 5. (Optional) Edit .env to customize API URL
 # Default: VITE_API_URL=http://localhost:8001
 nano .env
 
-# 5. Start development server
+# 6. Start development server
 npm run dev
 
-# 6. Open browser to http://localhost:3000
+# 7. Open browser to http://localhost:3000
 ```
 
 The dashboard will automatically connect to the Milton backend at `http://localhost:8001`.
+
+**Note:** The API server must be running before starting the dashboard. The server provides both the streaming endpoints and the new read-only monitoring endpoints.
 
 ---
 
@@ -255,6 +263,156 @@ Retrieve request history (optional, for restoring state).
     "duration_ms": 3200
   }
 ]
+```
+
+---
+
+## Read-Only API Endpoints
+
+The Milton API server now provides additional read-only endpoints for monitoring system state:
+
+### GET `/health`
+Basic health check for LLM and memory systems.
+
+**Response:**
+```json
+{
+  "status": "healthy",  // or "degraded"
+  "llm": "up",
+  "memory": "up",
+  "timestamp": "2026-01-03T10:00:00Z"
+}
+```
+
+### GET `/api/queue`
+Job queue status (queued, in-progress, recent completed/failed).
+
+**Query params:**
+- None
+
+**Response:**
+```json
+{
+  "queued": 2,
+  "in_progress": 1,
+  "queued_jobs": [...],
+  "in_progress_jobs": [...],
+  "timestamp": "2026-01-03T10:00:00Z"
+}
+```
+
+### GET `/api/reminders`
+Active reminders from milton-reminders.
+
+**Query params:**
+- `limit`: Number of reminders to return (default: 10, max: 100)
+
+**Response:**
+```json
+{
+  "reminders": [
+    {
+      "id": "rem-001",
+      "title": "Team meeting",
+      "due_at": "2026-01-03T14:00:00Z",
+      "priority": "high",
+      "tags": ["work"]
+    }
+  ],
+  "count": 1
+}
+```
+
+### GET `/api/outputs`
+Latest artifact files from STATE_DIR/outputs.
+
+**Query params:**
+- `limit`: Number of outputs to return (default: 20, max: 100)
+
+**Response:**
+```json
+{
+  "outputs": [
+    {
+      "name": "brief_20260103.txt",
+      "path": "outputs/brief_20260103.txt",
+      "size_bytes": 1234,
+      "size_kb": 1.21,
+      "modified_at": "2026-01-03T08:00:00",
+      "created_at": "2026-01-03T08:00:00"
+    }
+  ],
+  "count": 1,
+  "total": 15
+}
+```
+
+### GET `/api/memory/search`
+Search memory using vector similarity.
+
+**Query params:**
+- `query`: Search query (required)
+- `top_k`: Number of results (default: 5, max: 50)
+
+**Response:**
+```json
+{
+  "query": "neuroscience papers",
+  "results": [
+    {
+      "id": "vec-001",
+      "content": "Research paper summary...",
+      "context": "frontier_scan",
+      "agent": "frontier",
+      "timestamp": "2026-01-02T14:00:00Z",
+      "distance": 0.12
+    }
+  ],
+  "count": 5
+}
+```
+
+---
+
+## Security Warning
+
+⚠️ **IMPORTANT: This is a single-user development tool with NO authentication.**
+
+**Security Model:**
+- **NO multi-user support**: Assumes single trusted operator
+- **NO authentication**: Anyone with network access can read system state
+- **Read-only by design**: All new endpoints are GET requests with no mutations
+- **Local network only**: Do NOT expose to the internet
+
+**Safe Usage:**
+1. Run on `localhost` or trusted local network only
+2. Use firewall to block external access to port 8001
+3. For remote access, use SSH tunnel or Tailscale
+4. Never run on public IP addresses
+
+**What's Protected:**
+- No remote code execution (all mutations require local access)
+- No file write operations through API
+- No database modifications
+- Audit logging for all operations
+
+**What's NOT Protected:**
+- Reading system state (anyone on network can GET endpoints)
+- Memory contents (searchable via `/api/memory/search`)
+- Job queue contents (visible via `/api/queue`)
+- Output artifacts (listed via `/api/outputs`)
+
+**Recommended Setup:**
+```bash
+# Option 1: Localhost only (safest)
+# Backend binds to 127.0.0.1:8001
+# Dashboard accesses via http://localhost:8001
+
+# Option 2: Tailscale (secure remote access)
+tailscale serve https / http://127.0.0.1:8001
+
+# Option 3: SSH tunnel (temporary remote access)
+ssh -L 8001:localhost:8001 user@milton-server
 ```
 
 ---

@@ -176,12 +176,12 @@ class DiscoveryCache:
 
         for cache_file in self.cache_dir.glob("*.json"):
             if source is None:
-                cache_file.unlink()
+                cache_file.unlink(missing_ok=True)
                 cleared += 1
             else:
                 # Check if file matches source
                 if cache_file.stem.startswith(f"{source}_"):
-                    cache_file.unlink()
+                    cache_file.unlink(missing_ok=True)
                     cleared += 1
 
         logger.info(f"Cleared {cleared} cache entries" + (f" for source={source}" if source else ""))

@@ -557,6 +557,248 @@ def recent_requests() -> Any:
     return jsonify(payload)
 
 
+# ==============================================================================
+# Read-Only System State Endpoints
+# ==============================================================================
+
+@app.route("/health", methods=["GET"])
+def health() -> Any:
+    """
+    Health check endpoint (read-only).
+
+    Returns basic service health status.
+    """
+    llm_up, weaviate_up = _get_status_flags()
+
+    return jsonify({
+        "status": "healthy" if llm_up else "degraded",
+        "llm": "up" if llm_up else "down",
+        "memory": "up" if weaviate_up else "down",
+        "timestamp": _now_iso()
+    })
+
+
+@app.route("/api/queue", methods=["GET"])
+def queue_status() -> Any:
+    """
+    Job queue status endpoint (read-only).
+
+    Returns current job queue state: queued, in_progress, completed, failed.
+    """
+    try:
+        import milton_queue as queue_api
+
+        # Get job counts by status
+        tonight_dir = STATE_DIR / "jobs" / "tonight"
+        archive_dir = STATE_DIR / "jobs" / "archive"
+
+        queued_jobs = []
+        in_progress_jobs = []
+
+        if tonight_dir.exists():
+            for job_file in tonight_dir.glob("*.json"):
+                try:
+                    import json as json_lib
+                    with job_file.open() as f:
+                        job = json_lib.load(f)
+
+                    status = job.get("status", "queued")
+                    job_info = {
+                        "id": job.get("id"),
+                        "type": job.get("type"),
+                        "priority": job.get("priority"),
+                        "created_at": job.get("created_at"),
+                        "status": status
+                    }
+
+                    if status == "in_progress":
+                        in_progress_jobs.append(job_info)
+                    else:
+                        queued_jobs.append(job_info)
+                except Exception as e:
+                    logger.warning(f"Error reading job file {job_file}: {e}")
+
+        # Count completed/failed from archive (limit to recent)
+        completed_count = 0
+        failed_count = 0
+
+        if archive_dir.exists():
+            import json as json_lib
+            for job_file in sorted(archive_dir.glob("*.json"), reverse=True)[:100]:
+                try:
+                    with job_file.open() as f:
+                        job = json_lib.load(f)
+                    status = job.get("status", "")
+                    if "fail" in status.lower():
+                        failed_count += 1
+                    else:
+                        completed_count += 1
+                except Exception:
+                    pass
+
+        return jsonify({
+            "queued": len(queued_jobs),
+            "in_progress": len(in_progress_jobs),
+            "completed_recent": completed_count,
+            "failed_recent": failed_count,
+            "queued_jobs": queued_jobs[:10],  # Show first 10
+            "in_progress_jobs": in_progress_jobs,
+            "timestamp": _now_iso()
+        })
+
+    except Exception as e:
+        logger.error(f"Queue status error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to read queue status"}), 500
+
+
+@app.route("/api/reminders", methods=["GET"])
+def reminders() -> Any:
+    """
+    Reminders endpoint (read-only).
+
+    Returns next N active reminders.
+
+    Query params:
+    - limit: Number of reminders to return (default: 10, max: 100)
+    """
+    try:
+        limit = min(int(request.args.get("limit", "10")), 100)
+
+        # Import reminders module
+        try:
+            from milton_reminders.cli import list_reminders
+        except ImportError:
+            return jsonify({"reminders": [], "count": 0, "message": "Reminders module not available"})
+
+        # Get active reminders
+        reminders_list = list_reminders(status="active", limit=limit)
+
+        # Format for API
+        formatted = []
+        for reminder in reminders_list[:limit]:
+            formatted.append({
+                "id": reminder.get("id"),
+                "title": reminder.get("title"),
+                "due_at": reminder.get("due_at"),
+                "priority": reminder.get("priority", "medium"),
+                "tags": reminder.get("tags", []),
+                "created_at": reminder.get("created_at")
+            })
+
+        return jsonify({
+            "reminders": formatted,
+            "count": len(formatted),
+            "timestamp": _now_iso()
+        })
+
+    except Exception as e:
+        logger.error(f"Reminders error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to fetch reminders"}), 500
+
+
+@app.route("/api/outputs", methods=["GET"])
+def outputs() -> Any:
+    """
+    Latest outputs endpoint (read-only).
+
+    Returns latest N artifact files from STATE_DIR/outputs.
+
+    Query params:
+    - limit: Number of outputs to return (default: 20, max: 100)
+    """
+    try:
+        limit = min(int(request.args.get("limit", "20")), 100)
+
+        outputs_dir = STATE_DIR / "outputs"
+        if not outputs_dir.exists():
+            return jsonify({"outputs": [], "count": 0, "message": "No outputs directory"})
+
+        # Get all output files sorted by modification time
+        output_files = []
+        for output_file in outputs_dir.glob("*"):
+            if output_file.is_file():
+                stat = output_file.stat()
+                output_files.append({
+                    "name": output_file.name,
+                    "path": str(output_file.relative_to(STATE_DIR)),
+                    "size_bytes": stat.st_size,
+                    "size_kb": round(stat.st_size / 1024, 2),
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat()
+                })
+
+        # Sort by modification time (newest first)
+        output_files.sort(key=lambda x: x["modified_at"], reverse=True)
+
+        # Note: Tailscale serve URLs would be added here if configured
+        # For now, just provide file paths
+
+        limited_outputs = output_files[:limit]
+        return jsonify({
+            "outputs": limited_outputs,
+            "count": len(limited_outputs),
+            "total": len(output_files),
+            "timestamp": _now_iso()
+        })
+
+    except Exception as e:
+        logger.error(f"Outputs error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to fetch outputs"}), 500
+
+
+@app.route("/api/memory/search", methods=["GET"])
+def memory_search() -> Any:
+    """
+    Memory search endpoint (read-only).
+
+    Search short-term memory using deterministic retrieval.
+
+    Query params:
+    - query: Search query (required)
+    - top_k: Number of results to return (default: 5, max: 50)
+    """
+    try:
+        query = request.args.get("query", "").strip()
+        if not query:
+            return jsonify({"error": "Missing 'query' parameter"}), 400
+
+        top_k = min(int(request.args.get("top_k", "5")), 50)
+
+        # Ensure schema is ready
+        if not _ensure_schema():
+            return jsonify({"error": "Memory system not available"}), 503
+
+        # Use existing memory retrieval
+        from memory.retrieve import query_relevant
+
+        results = query_relevant(query, top_k=top_k)
+
+        # Format results
+        formatted_results = []
+        for result in results:
+            formatted_results.append({
+                "id": result.get("id"),
+                "content": result.get("content"),
+                "context": result.get("context"),
+                "agent": result.get("agent"),
+                "timestamp": result.get("timestamp"),
+                "distance": result.get("distance")
+            })
+
+        return jsonify({
+            "query": query,
+            "results": formatted_results,
+            "count": len(formatted_results),
+            "timestamp": _now_iso()
+        })
+
+    except Exception as e:
+        logger.error(f"Memory search error: {e}", exc_info=True)
+        return jsonify({"error": "Memory search failed"}), 500
+
+
 if __name__ == "__main__":
     logger.info("Starting Milton API server at http://localhost:8001")
+    logger.info("SECURITY WARNING: This server is for local development only")
+    logger.info("Do NOT expose to public internet without authentication")
     app.run(host="localhost", port=8001, debug=True, use_reloader=False)

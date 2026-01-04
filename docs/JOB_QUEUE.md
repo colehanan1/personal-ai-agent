@@ -482,14 +482,14 @@ for job_file in archive_dir.glob("*.json"):
 pytest tests/test_job_queue_concurrency.py -v
 ```
 
-### Integration Test (25 jobs)
+### Integration Test (20 jobs)
 
 ```bash
 pytest tests/test_job_queue_concurrency.py::test_full_integration_20_jobs -v
 ```
 
 **What it tests:**
-- Enqueues 25 jobs concurrently
+- Enqueues 20 jobs concurrently
 - Processes with simulated CORTEX
 - Verifies exactly-once execution
 - Checks artifact preservation

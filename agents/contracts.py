@@ -106,9 +106,10 @@ class TaskRequest:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TaskRequest":
         """Create from dict with enum deserialization."""
-        if "priority" in data and isinstance(data["priority"], str):
-            data["priority"] = TaskPriority(data["priority"])
-        return cls(**data)
+        copied = dict(data)
+        if "priority" in copied and isinstance(copied["priority"], str):
+            copied["priority"] = TaskPriority(copied["priority"])
+        return cls(**copied)
 
 
 @dataclass(frozen=True)

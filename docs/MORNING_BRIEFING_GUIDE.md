@@ -95,6 +95,8 @@ WEATHER_LON=-90.1994
 
 # Optional fallback (city, country or "lat,lon")
 WEATHER_LOCATION=St. Louis,US
+
+If both are set, WEATHER_LAT and WEATHER_LON take precedence over WEATHER_LOCATION.
 ```
 
 ## ✨ Next Run

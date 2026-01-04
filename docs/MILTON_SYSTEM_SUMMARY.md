@@ -19,7 +19,7 @@ Milton is a local-first multi-agent AI system for research, automation, and codi
 - Runs a voice-to-code orchestrator that ingests ntfy messages, uses Perplexity for research, and dispatches Claude Code with Codex fallback plus status updates. (Evidence: `docs/ORCHESTRATOR_README.md`, `milton_orchestrator/`, `docs/ORCHESTRATOR_COMPLETE.md`)
 - Implements a persistent reminders system with SQLite storage and ntfy notifications; integrated into NEXUS and the orchestrator. (Evidence: `milton_orchestrator/reminders.py`, `docs/reminders.md`, `REMINDERS_IMPLEMENTATION_SUMMARY.md`)
 - Supports mobile outputs via ntfy and tailnet-only click-to-open links using Tailscale Serve; SMB share links are documented as an alternative. (Evidence: `docs/IOS_OUTPUT_ACCESS.md`, `docs/ORCHESTRATOR_QUICKSTART.md`)
-- Exposes a Flask API server and React dashboard for streaming responses and system status. (Evidence: `scripts/start_api_server.py`, `milton-dashboard/README.md`)
+- Exposes a Flask API server and React dashboard for streaming responses and system status with read-only monitoring endpoints (health, queue, reminders, outputs, memory search). (Evidence: `scripts/start_api_server.py`, `milton-dashboard/README.md`, `tests/test_dashboard_api.py`)
 
 ### What it is intended to become
 - A three-prong self-improving system that cycles memory -> LoRA training -> model evolution for continuous personalization. (Evidence: `docs/01-vision.md`, `docs/03-roadmap.md`)
@@ -32,7 +32,6 @@ Milton is a local-first multi-agent AI system for research, automation, and codi
 - Overall: Partial. Phase 2 is documented as operational, but Phase 3 pipelines (training and model evolution) are not implemented. (Evidence: `docs/PHASE2_COMPLETE.md`, `docs/02-current-state.md`)
 - Working: vLLM inference, Weaviate memory, and agent imports are documented as passing Phase 2 tests. (Evidence: `docs/PHASE2_COMPLETE.md`, `tests/test_phase2.py`)
 - Partial: deterministic memory retrieval and compression exist, but semantic search and automated context injection are missing; NEXUS evening briefing contains placeholders; some integrations depend on API keys. (Evidence: `memory/retrieve.py`, `memory/compress.py`, `docs/02-current-state.md`, `agents/nexus.py`, `docs/ERROR_SUMMARY.md`)
-- Stubbed: calendar integration returns empty results and logs warnings. (Evidence: `integrations/calendar.py`)
 - Not wired: training/evolution components referenced in architecture and roadmap do not exist in the repo. (Evidence: `docs/04-architecture.md`, `docs/03-roadmap.md`, `docs/02-current-state.md`)
 
 ## 2) User Goals and Non-Goals (evidence-based)
@@ -50,7 +49,6 @@ Milton is a local-first multi-agent AI system for research, automation, and codi
 
 ### Non-goals (explicitly out of scope today)
 - Continuous training and model evolution pipelines in Phase 2 (both are documented as not started). (Evidence: `docs/02-current-state.md`)
-- Calendar integration with real OAuth-backed events (currently a stub). (Evidence: `integrations/calendar.py`)
 - Multi-user support in Phase 2 (planned for Phase 3). (Evidence: `README.md`)
 - Cloud-hosted or SaaS deployment (Phase 4 vision only). (Evidence: `README.md`)
 
@@ -94,7 +92,7 @@ flowchart LR
     News["NewsAPI"]
     Arxiv["arXiv"]
     Home["Home Assistant"]
-    Calendar["Calendar (stub)"]
+    Calendar["Google Calendar (OAuth2)"]
     WebSearch["Web search providers"]
   end
 
@@ -158,7 +156,7 @@ flowchart LR
 Major subsystems and data flow:
 - Agent runtime: `agents/nexus.py`, `agents/cortex.py`, and `agents/frontier.py` share a single LLM endpoint and store memory via the memory layer. (Evidence: `agents/*.py`, `README.md`)
 - Orchestrator: the `milton_orchestrator` package is a parallel control plane that listens for ntfy requests, optionally runs Perplexity research with structured outputs, and executes Claude/Codex CLI in target repos. (Evidence: `docs/ORCHESTRATOR_README.md`, `docs/PERPLEXITY_STRUCTURED_PROMPTING.md`)
-- API server and dashboard: `scripts/start_api_server.py` exposes REST and WebSocket streaming endpoints expected by the React dashboard in `milton-dashboard/`. (Evidence: `scripts/start_api_server.py`, `milton-dashboard/README.md`)
+- API server and dashboard: `scripts/start_api_server.py` exposes REST and WebSocket streaming endpoints plus read-only monitoring endpoints (health, queue, reminders, outputs, memory search) expected by the React dashboard in `milton-dashboard/`. (Evidence: `scripts/start_api_server.py`, `milton-dashboard/README.md`, `tests/test_dashboard_api.py`)
 - Planned training/evolution: the architecture and roadmap reference training and evolution components that are not currently present in the repo. (Evidence: `docs/04-architecture.md`, `docs/03-roadmap.md`)
 
 ## 4) Agents and Responsibilities (if present)
@@ -234,7 +232,7 @@ Major subsystems and data flow:
 | NewsAPI | News in briefings/frontier | `NEWS_API_KEY` | 401 if key missing | `integrations/news_api.py`, `docs/ERROR_SUMMARY.md` |
 | arXiv | Paper search | No key required | Network errors | `integrations/arxiv_api.py`, `agents/frontier.py` |
 | Home Assistant | Home status integration | `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN` | Connection refused if service not running | `integrations/home_assistant.py`, `docs/IMPLEMENTATION_PLAN.md`, `docs/ERROR_SUMMARY.md` |
-| Calendar (stub) | Calendar events | Stub only; OAuth not implemented | Always returns empty list | `integrations/calendar.py` |
+| Google Calendar | Calendar events (OAuth2 read-only) | OAuth2 client secret and token in `STATE_DIR/credentials/` | Falls back to mock mode if credentials unavailable | `integrations/calendar.py`, `docs/CALENDAR.md`, `tests/test_calendar.py` |
 | Web search providers | Optional web lookup | API keys referenced in code (not documented in `.env.example`) | Returns empty results on failure | `integrations/web_search.py`, `agents/nexus.py` |
 | Perplexity | Orchestrator research | `PERPLEXITY_API_KEY`, `PERPLEXITY_MODEL` | Requests fail if key missing | `docs/ORCHESTRATOR_README.md`, `milton_orchestrator/perplexity_client.py` |
 | Claude Code CLI | Code execution | `CLAUDE_BIN` | Fallback to Codex if Claude unavailable/limited | `docs/ORCHESTRATOR_README.md`, `milton_orchestrator/claude_runner.py` |
@@ -247,8 +245,8 @@ Major subsystems and data flow:
 | --- | --- | --- | --- |
 | CLI/scripts | Manual runs for briefings, health checks, vLLM, API server | `scripts/` | Primary operational surface for Phase 2 |
 | Systemd timers/services | Scheduled briefings and job processing | `systemd/` | Uses user-level systemd units |
-| ntfy iPhone ingestion | Ask/answer loop and reminders | `docs/ASK_MILTON_FROM_IPHONE.md`, `scripts/ask_from_phone.py`, `milton_orchestrator/ntfy_client.py` | A "milton-phone-listener" unit is referenced in docs but not present |
-| API server + dashboard | Streaming responses and system status | `scripts/start_api_server.py`, `milton-dashboard/README.md` | Dashboard expects backend on port 8001 |
+| ntfy iPhone ingestion | Ask/answer loop and reminders | `docs/ASK_MILTON_FROM_IPHONE.md`, `scripts/ask_from_phone.py`, `systemd/milton-phone-listener.service` | Production systemd service with security hardening; supports message prefix routing (claude:/cortex:/frontier:/status:/briefing:) |
+| API server + dashboard | Streaming responses and read-only system monitoring | `scripts/start_api_server.py`, `milton-dashboard/README.md`, `tests/test_dashboard_api.py` | Dashboard expects backend on port 8001; provides health, queue, reminders, outputs, memory search endpoints |
 | File outputs | Briefings, job results, archives | `STATE_DIR/inbox`, `STATE_DIR/job_queue`, `STATE_DIR/outputs` | `STATE_DIR` can redirect paths |
 
 ### Remote access model
@@ -299,7 +297,7 @@ milton/
 ├── docs/                   # documentation
 │   └── legacy/             # legacy/unrelated references
 │       └── milton_delaware_ami_architecture_report.md  # municipal AMI RFQ summary
-├── integrations/           # weather, arXiv, news, home assistant, calendar stub, web search
+├── integrations/           # weather, arXiv, news, home assistant, Google Calendar (OAuth2), web search
 ├── memory/                 # Weaviate + JSONL memory, schema, compression
 ├── milton_orchestrator/    # ntfy, Perplexity, Claude/Codex, reminders
 ├── milton-dashboard/       # React dashboard + frontend docs
@@ -335,11 +333,11 @@ milton/
 | CORTEX plan/execute/report flow | Partial | `agents/cortex.py`, `scripts/job_processor.py` |
 | FRONTIER research discovery | Partial | `agents/frontier.py`, `integrations/news_api.py` |
 | Daily OS systemd automation | Works | `systemd/`, `docs/DAILY_OS.md` |
-| iPhone ask/answer listener | Partial | `scripts/ask_from_phone.py`, `docs/ASK_MILTON_FROM_IPHONE.md` |
+| iPhone ask/answer listener | Works | `scripts/ask_from_phone.py`, `docs/ASK_MILTON_FROM_IPHONE.md`, `systemd/milton-phone-listener.service`, `tests/test_phone_listener.py` |
 | Orchestrator (ntfy -> Perplexity -> Claude/Codex) | Works | `milton_orchestrator/`, `docs/ORCHESTRATOR_COMPLETE.md` |
 | Reminders system | Works | `milton_orchestrator/reminders.py`, `docs/reminders.md` |
-| Dashboard + API server | Partial | `milton-dashboard/README.md`, `scripts/start_api_server.py` |
-| Calendar integration | Partial | `integrations/calendar.py` |
+| Dashboard + API server | Works | `milton-dashboard/README.md`, `scripts/start_api_server.py`, `tests/test_dashboard_api.py`, `docs/DASHBOARD_API_DOD_CHECKLIST.md` |
+| Calendar integration | Works | `integrations/calendar.py`, `tests/test_calendar.py`, `docs/CALENDAR.md`, `docs/CALENDAR_DOD_CHECKLIST.md` |
 | Semantic memory embeddings | Planned | `docs/02-current-state.md`, `docs/03-roadmap.md` |
 | LoRA training pipeline | Planned | `docs/02-current-state.md`, `docs/03-roadmap.md` |
 | Model evolution pipeline | Planned | `docs/01-vision.md`, `docs/03-roadmap.md` |
@@ -360,9 +358,6 @@ milton/
 - Weather API key naming policy: Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. (Evidence: `docs/02-current-state.md`, `integrations/weather.py`)
 
 ### User-facing capability
-- Replace the calendar stub with OAuth-backed event retrieval. (Evidence: `integrations/calendar.py`)
-- Provide a systemd unit for the phone listener or update docs to match current scripts. (Evidence: `docs/ASK_MILTON_FROM_IPHONE.md`, `scripts/ask_from_phone.py`, `systemd/`)
-- Expand the dashboard backend endpoints to expose live memory/queue metrics consistently. (Evidence: `milton-dashboard/README.md`, `scripts/start_api_server.py`)
 - Add model checkpoint management and rollback controls for training outputs. (Evidence: `docs/02-current-state.md`)
 - Build an edge deployment path using quantization and CPU fallback packaging. (Evidence: `docs/01-vision.md`, `docs/03-roadmap.md`)
 - Define the multi-user support plan (auth, isolation, shared memory policy). (Evidence: `README.md`)
@@ -458,7 +453,7 @@ milton/
 - ~~Which model name and size should be treated as the current production target (docs mention both 8B and 405B variants)?~~ **RESOLVED**: Production target is Llama-3.1-8B-Instruct (served as `llama31-8b-instruct`). 405B is documented as optional future upgrade.
 - ~~Should PhD-aware briefings fully replace `enhanced_morning_briefing.py`, or do you want both pipelines kept?~~ **RESOLVED**: Unified into single `enhanced_morning_briefing.py` with auto-detection of PhD mode. PhD-aware wrapper kept for backward compatibility.
 - ~~Which weather API key name should be canonical in docs and config: `WEATHER_API_KEY` or `OPENWEATHER_API_KEY`?~~ **RESOLVED**: Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility. (Evidence: `integrations/weather.py`, `docs/02-current-state.md`)
-- Should the iPhone listener be a first-class systemd service in this repo, or should docs point only to the standalone script? (Evidence: `docs/ASK_MILTON_FROM_IPHONE.md`, `scripts/ask_from_phone.py`)
+- ~~Should the iPhone listener be a first-class systemd service in this repo, or should docs point only to the standalone script?~~ **RESOLVED**: iPhone listener is now a first-class systemd service with security hardening, message prefix parsing, and action allowlist. (Evidence: `systemd/milton-phone-listener.service`, `docs/ASK_MILTON_FROM_IPHONE.md`, `tests/test_phone_listener.py`)
 - Are both queue systems (`queue/` API and `job_queue/` file storage) intended long-term, or should one be deprecated? (Evidence: `queue/api.py`, `job_queue/`)
 - Default state directory is `~/.local/state/milton` across subsystems; override with `STATE_DIR` when needed. (Evidence: `docs/ARCHITECTURE_NAMESPACE.md`, `docs/DAILY_OS.md`, `docs/ORCHESTRATOR_README.md`)
-- Should the dashboard API server be a first-class runtime (started by default), or remain an optional dev tool? (Evidence: `milton-dashboard/README.md`, `scripts/start_api_server.py`)
+- ~~Should the dashboard API server be a first-class runtime (started by default), or remain an optional dev tool?~~ **RESOLVED**: Dashboard API server remains an optional dev tool with read-only endpoints. Not started by default. (Evidence: `milton-dashboard/README.md`, `scripts/start_api_server.py`, `docs/DASHBOARD_API_DOD_CHECKLIST.md`)

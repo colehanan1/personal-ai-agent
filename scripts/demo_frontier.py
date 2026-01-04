@@ -66,7 +66,10 @@ def print_discovery_result(result: DiscoveryResult):
     print(f"\n📄 PAPERS ({len(result.papers)})")
     for i, paper in enumerate(result.papers[:3], 1):  # Show first 3
         title = paper.get("title", "Untitled")
-        arxiv_id = paper.get("id") or paper.get("arxiv_id", "unknown")
+        if "id" in paper:
+            arxiv_id = paper.get("id", "unknown")
+        else:
+            arxiv_id = paper.get("arxiv_id", "unknown")
         print(f"  {i}. {title[:60]}...")
         print(f"     arXiv: {arxiv_id}")
 

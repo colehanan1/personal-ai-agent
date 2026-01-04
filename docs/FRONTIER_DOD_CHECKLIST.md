@@ -344,6 +344,8 @@ python scripts/demo_frontier.py --clear-cache
 
 ### NEXUS Integration
 
+_Status: Validated via `tests/test_job_queue_concurrency.py::test_full_integration_20_jobs` with NEWS_API_KEY optional (graceful degradation). Ensure `.env` has OPENWEATHER_API_KEY or skip news fetch gracefully._
+
 FRONTIER can be called by NEXUS for research discovery tasks:
 
 ```python
@@ -358,6 +360,8 @@ for finding in result.findings:
 ```
 
 ### CORTEX Integration
+
+_Status: Illustrative example; enqueue pattern mirrors production queue API. Requires queue storage path defaults (STATE_DIR) and NEWS_API_KEY optional. No dedicated test covers this exact snippet._
 
 FRONTIER discovery can be queued as overnight jobs:
 

@@ -21,6 +21,7 @@ import os
 import sys
 import time
 import json
+import re
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
@@ -139,11 +140,37 @@ def determine_action(prefix: Optional[str], query: str) -> str:
     elif prefix == "briefing":
         return "get_briefing"
     elif prefix in ["cortex", "frontier"]:
-        # Check if it's a job submission
-        if any(keyword in query.lower() for keyword in ["analyze", "research", "discover", "tonight", "overnight"]):
+        lower_q = query.lower()
+
+        # Explicit phrases that signal a queued/background job
+        phrase_patterns = [
+            r"\brun overnight\b",
+            r"\brun (an )?overnight job\b",
+            r"\bstart (an )?overnight job\b",
+            r"\bsubmit (a )?job\b",
+            r"\bstart (a )?job\b",
+            r"\bqueue (a )?job\b",
+            r"\bprocess this dataset\b",
+            r"\bprocess the dataset\b",
+            r"\brun .* in background\b",
+            r"\bbackground job\b",
+            r"\btonight job\b",
+        ]
+
+        if any(re.search(pat, lower_q) for pat in phrase_patterns):
             return "enqueue_job"
-        else:
-            return "ask_question"
+
+        # Fallback: verb + context token combination (word-boundary to avoid substrings)
+        verb_tokens = ["run", "start", "submit", "queue", "process", "schedule"]
+        context_tokens = ["overnight", "tonight", "background", "job", "queue", "later", "async"]
+
+        has_verb = any(re.search(rf"\b{verb}\b", lower_q) for verb in verb_tokens)
+        has_context = any(re.search(rf"\b{ctx}\b", lower_q) for ctx in context_tokens)
+
+        if has_verb and has_context:
+            return "enqueue_job"
+
+        return "ask_question"
     else:
         # Default: ask question via NEXUS
         return "ask_question"

@@ -393,6 +393,7 @@ if response.route_used == "cortex":
 
 ```python
 from agents.cortex import CORTEX
+from agents.contracts import TaskStatus
 
 cortex = CORTEX()
 
@@ -563,12 +564,13 @@ record_memory(
 ### Deprecation Path
 
 Legacy dict-based returns will continue to work but should be migrated to contract types:
+Legacy return types remain supported only for backward compatibility; new code should use the contract types above.
 
 | Method | Legacy Return | New Return | Deadline |
 |--------|---------------|------------|----------|
-| `CORTEX.generate_plan()` | `Dict[str, Any]` | `TaskPlan` | Migrated |
-| `CORTEX.process_overnight_job()` | `Dict[str, Any]` | `TaskResult` | Migrated |
-| `FRONTIER.daily_discovery()` | `Dict[str, Any]` | `DiscoveryResult` | Migrated |
+| `CORTEX.generate_plan()` | `Dict[str, Any]` | `TaskPlan` | Migration complete (legacy retained for backward compatibility) |
+| `CORTEX.process_overnight_job()` | `Dict[str, Any]` | `TaskResult` | Migration complete (legacy retained for backward compatibility) |
+| `FRONTIER.daily_discovery()` | `Dict[str, Any]` | `DiscoveryResult` | Migration complete (legacy retained for backward compatibility) |
 
 ### Testing Requirements
 

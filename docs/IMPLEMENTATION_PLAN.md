@@ -395,6 +395,12 @@ WEATHER_LAT=38.6270
 WEATHER_LON=-90.1994
 WEATHER_LOCATION=St. Louis,US  # Optional fallback (city, country or "lat,lon")
 
+# Resolution rules:
+# - If both WEATHER_LAT and WEATHER_LON are set, they take precedence over WEATHER_LOCATION.
+# - WEATHER_LOCATION is used only when either coordinate is missing.
+# - WEATHER_LOCATION parsing: if it matches numeric "lat,lon" (two floats, optional spaces), it is parsed as coordinates (e.g., WEATHER_LOCATION="38.6270,-90.1994"); otherwise it is treated as "city,country" (split on the last comma).
+# - Legacy WEATHER_API_KEY remains accepted for backward compatibility.
+
 # Need to Add
 LLM_API_URL=http://localhost:8000     # vLLM default (production)
 LLM_MODEL=llama31-8b-instruct         # Production model (8B standard)

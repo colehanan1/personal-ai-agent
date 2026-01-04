@@ -54,13 +54,19 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
         close_client = True
 
     try:
-        # Short-term memory schema
+        # Short-term memory schema with semantic vector support
         if not client.collections.exists("ShortTermMemory"):
             client.collections.create(
                 name="ShortTermMemory",
-                description="Recent interactions and events (24-48 hours)",
+                description="Recent interactions and events (24-48 hours) with semantic embeddings",
+                # Use manual vectorization (we generate embeddings ourselves)
                 vectorizer_config=Configure.Vectorizer.none(),
-                vector_index_config=Configure.VectorIndex.none(),
+                # Configure HNSW vector index for fast similarity search
+                vector_index_config=Configure.VectorIndex.hnsw(
+                    distance_metric="cosine",
+                    ef_construction=128,  # Build-time quality/speed tradeoff
+                    max_connections=64    # Memory/quality tradeoff
+                ),
                 properties=[
                     Property(name="timestamp", data_type=DataType.DATE),
                     Property(name="agent", data_type=DataType.TEXT),
@@ -69,7 +75,7 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
                     Property(name="metadata", data_type=DataType.TEXT),  # JSON string
                 ],
             )
-            print("Created ShortTermMemory schema")
+            print("Created ShortTermMemory schema with semantic vector support (384-dim cosine)")
 
         # Working memory schema
         if not client.collections.exists("WorkingMemory"):
