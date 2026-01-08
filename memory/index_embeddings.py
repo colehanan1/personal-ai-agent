@@ -15,10 +15,19 @@ from pathlib import Path
 from typing import Optional, List, Tuple
 from datetime import datetime
 import json
+import sys
 
-from .backends import get_backend
-from .embeddings import embed_batch, is_available, EMBEDDING_DIM
-from .init_db import get_client
+# Handle both direct execution and module import
+if __name__ == "__main__" and __package__ is None:
+    # Add parent directory to path for direct execution
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from memory.backends import get_backend
+    from memory.embeddings import embed_batch, is_available, EMBEDDING_DIM
+    from memory.init_db import get_client
+else:
+    from .backends import get_backend
+    from .embeddings import embed_batch, is_available, EMBEDDING_DIM
+    from .init_db import get_client
 
 logger = logging.getLogger(__name__)
 

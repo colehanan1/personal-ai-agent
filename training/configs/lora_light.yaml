@@ -1,0 +1,49 @@
+# LoRA Training Configuration - Light (Fast)
+#
+# Best for: Daily quick updates, rapid iteration
+# Training time: ~5 minutes for 100 conversation pairs
+# Adapter size: ~80 MB
+# Quality: Lower rank means less adaptation, faster convergence
+
+# Model paths
+base_model_path: /home/cole-hanan/milton/models/Llama-3.1-8B-Instruct-HF
+run_name_prefix: lora_light
+
+# LoRA hyperparameters (smaller rank for faster training)
+lora_r: 8
+lora_alpha: 16
+lora_dropout: 0.05
+target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# Training hyperparameters (fewer epochs, larger batches)
+learning_rate: 5.0e-4
+num_epochs: 2
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 2
+bf16: true
+lr_scheduler_type: cosine
+warmup_steps: 5
+max_grad_norm: 1.0
+
+# Logging
+logging_steps: 5
+save_steps: 50
+
+# Data paths
+train_file: training/data/exported/train.jsonl
+test_file: training/data/exported/test.jsonl
+
+# Output paths
+adapters_dir: adapters
+runs_dir: runs
+
+# Advanced options
+max_seq_length: 2048
+use_gradient_checkpointing: true

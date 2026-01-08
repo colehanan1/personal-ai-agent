@@ -1,0 +1,49 @@
+# LoRA Training Configuration - Default (Balanced)
+#
+# Best for: Weekly retraining
+# Training time: ~10 minutes for 100 conversation pairs
+# Adapter size: ~160 MB
+# Quality: Good balance of adaptation vs stability
+
+# Model paths
+base_model_path: /home/cole-hanan/milton/models/Llama-3.1-8B-Instruct-HF
+run_name_prefix: lora
+
+# LoRA hyperparameters
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.1
+target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# Training hyperparameters
+learning_rate: 3.0e-4
+num_epochs: 3
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 4
+bf16: true
+lr_scheduler_type: cosine
+warmup_steps: 10
+max_grad_norm: 1.0
+
+# Logging
+logging_steps: 10
+save_steps: 100
+
+# Data paths
+train_file: training/data/exported/train.jsonl
+test_file: training/data/exported/test.jsonl
+
+# Output paths
+adapters_dir: adapters
+runs_dir: runs
+
+# Advanced options
+max_seq_length: 2048
+use_gradient_checkpointing: true

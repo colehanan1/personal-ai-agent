@@ -1,0 +1,49 @@
+# LoRA Training Configuration - Heavy (Comprehensive)
+#
+# Best for: Monthly comprehensive retraining, maximum adaptation
+# Training time: ~30 minutes for 100 conversation pairs
+# Adapter size: ~640 MB
+# Quality: High rank means more capacity, better adaptation to domain
+
+# Model paths
+base_model_path: /home/cole-hanan/milton/models/Llama-3.1-8B-Instruct-HF
+run_name_prefix: lora_heavy
+
+# LoRA hyperparameters (higher rank for more capacity)
+lora_r: 64
+lora_alpha: 128
+lora_dropout: 0.1
+target_modules:
+  - q_proj
+  - k_proj
+  - v_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+# Training hyperparameters (more epochs, careful learning)
+learning_rate: 2.0e-4
+num_epochs: 5
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 8
+bf16: true
+lr_scheduler_type: cosine
+warmup_steps: 20
+max_grad_norm: 0.5
+
+# Logging
+logging_steps: 10
+save_steps: 100
+
+# Data paths
+train_file: training/data/exported/train.jsonl
+test_file: training/data/exported/test.jsonl
+
+# Output paths
+adapters_dir: adapters
+runs_dir: runs
+
+# Advanced options
+max_seq_length: 2048
+use_gradient_checkpointing: true

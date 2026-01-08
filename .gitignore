@@ -89,3 +89,15 @@ Thumbs.db
 # =============================================================================
 # Custom Additions (add your own below)
 # =============================================================================
+
+# =============================================================================
+# LoRA Training Pipeline
+# =============================================================================
+# Training runs (logs, checkpoints, temporary artifacts)
+/runs/
+
+# Exported training data (generated from memory, can be regenerated)
+/training/data/exported/
+
+# Note: /adapters/ is NOT ignored - trained adapters are valuable artifacts
+# that should be version controlled for provenance tracking

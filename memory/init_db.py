@@ -3,7 +3,7 @@ Weaviate Database Initialization
 Creates schema for short-term, working, and long-term memory.
 """
 import weaviate
-from weaviate.classes.config import Configure, Property, DataType
+from weaviate.classes.config import Configure, Property, DataType, VectorDistances
 from typing import Optional
 import os
 from dotenv import load_dotenv
@@ -63,7 +63,7 @@ def create_schema(client: Optional[weaviate.WeaviateClient] = None) -> None:
                 vectorizer_config=Configure.Vectorizer.none(),
                 # Configure HNSW vector index for fast similarity search
                 vector_index_config=Configure.VectorIndex.hnsw(
-                    distance_metric="cosine",
+                    distance_metric=VectorDistances.COSINE,
                     ef_construction=128,  # Build-time quality/speed tradeoff
                     max_connections=64    # Memory/quality tradeoff
                 ),
