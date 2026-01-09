@@ -16,7 +16,7 @@ set -euo pipefail
 
 # Configuration
 TAILSCALE_IP="100.117.64.117"
-PORT="8080"
+PORT="8090"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUTS_DIR="${REPO_DIR}/milton_outputs"
 NGINX_SITE_NAME="milton_outputs"
@@ -106,12 +106,12 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
 
-    # Read-only: disable methods that could modify files
-    limit_except GET HEAD {
-        deny all;
-    }
-
     location / {
+        # Read-only: disable methods that could modify files
+        limit_except GET HEAD {
+            deny all;
+        }
+
         # Try to serve file directly, or show directory listing
         try_files \$uri \$uri/ =404;
     }

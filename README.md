@@ -193,7 +193,7 @@ Browse and download Milton's output files from your iPhone or any device on your
 sudo ./scripts/setup_milton_outputs_server.sh
 ```
 
-**Access URL:** `http://100.117.64.117:8080/`
+**Access URL:** `http://100.117.64.117:8090/`
 
 This sets up a persistent, Tailscale-only Nginx server with:
 - Read-only directory listing of `milton_outputs/` (symlinked to `shared_outputs/`)

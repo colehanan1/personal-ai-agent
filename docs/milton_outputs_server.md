@@ -43,8 +43,10 @@ This script will:
 Once installed, access the server at:
 
 ```
-http://100.117.64.117:8080/
+http://100.117.64.117:8090/
 ```
+
+**Note:** Port 8090 is used to avoid conflict with Weaviate (port 8080) and vLLM (port 8000).
 
 This URL is accessible from any device on your Tailscale network, including your iPhone.
 
@@ -57,7 +59,7 @@ After installation, verify the server is working:
 systemctl status nginx
 
 # Test HTTP response locally
-curl -I http://100.117.64.117:8080/
+curl -I http://100.117.64.117:8090/
 
 # View access logs
 tail -f /var/log/nginx/milton_outputs_access.log
@@ -83,11 +85,11 @@ Edit the setup script or Nginx config manually:
 ```bash
 # Edit setup script (recommended for reproducibility)
 nano scripts/setup_milton_outputs_server.sh
-# Change: PORT="8080" to desired port
+# Change: PORT="8090" to desired port
 
 # Or edit Nginx config directly
 sudo nano /etc/nginx/sites-available/milton_outputs
-# Change: listen 100.117.64.117:8080; to desired port
+# Change: listen 100.117.64.117:8090; to desired port
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
@@ -117,7 +119,7 @@ nano scripts/setup_milton_outputs_server.sh
 
 # Or edit Nginx config directly
 sudo nano /etc/nginx/sites-available/milton_outputs
-# Change: listen 100.117.64.117:8080; to new IP
+# Change: listen 100.117.64.117:8090; to new IP
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
@@ -127,7 +129,7 @@ sudo nginx -t && sudo systemctl reload nginx
 
 The server implements **defense-in-depth** security:
 
-1. **Bind to Tailscale IP only** - Nginx listens on `100.117.64.117:8080`, not `0.0.0.0:8080`
+1. **Bind to Tailscale IP only** - Nginx listens on `100.117.64.117:8090`, not `0.0.0.0:8090`
    - This prevents access from any interface except Tailscale
    - Even if firewall rules fail, the service is not publicly exposed
 
@@ -154,7 +156,7 @@ The server implements **defense-in-depth** security:
 ❌ Tailscale account compromise (attacker on your Tailnet can access)
 ❌ Local privilege escalation (attacker with shell access can read files anyway)
 
-**Recommendation:** Use Tailscale ACLs to further restrict which devices can access port 8080 on this node.
+**Recommendation:** Use Tailscale ACLs to further restrict which devices can access port 8090 on this node.
 
 ## Troubleshooting
 
@@ -186,20 +188,20 @@ sudo systemctl restart nginx
 
 2. Verify server is listening:
    ```bash
-   sudo netstat -tlnp | grep 8080
-   # Should show: tcp 0 0 100.117.64.117:8080 0.0.0.0:* LISTEN
+   sudo netstat -tlnp | grep 8090
+   # Should show: tcp 0 0 100.117.64.117:8090 0.0.0.0:* LISTEN
    ```
 
 3. Test from server:
    ```bash
-   curl http://100.117.64.117:8080/
+   curl http://100.117.64.117:8090/
    ```
 
 4. Check firewall rules:
    ```bash
    sudo ufw status
    # If ufw is active, add rule:
-   sudo ufw allow from 100.64.0.0/10 to any port 8080
+   sudo ufw allow from 100.64.0.0/10 to any port 8090
    ```
 
 ### Permission Errors
@@ -217,8 +219,8 @@ sudo chmod -R 755 /home/cole-hanan/milton/milton_outputs
 ### Port Already in Use
 
 ```bash
-# Check what's using port 8080
-sudo netstat -tlnp | grep 8080
+# Check what's using port 8090
+sudo netstat -tlnp | grep 8090
 
 # Change port in Nginx config
 sudo nano /etc/nginx/sites-available/milton_outputs
@@ -249,13 +251,13 @@ sudo apt-get autoremove
 │  (Safari)       │
 └────────┬────────┘
          │ Tailscale VPN
-         │ http://100.117.64.117:8080/
+         │ http://100.117.64.117:8090/
          ▼
 ┌─────────────────────────────────────┐
 │  Milton Server                      │
 │  ┌───────────────────────────────┐  │
 │  │  Nginx                        │  │
-│  │  - Listen: 100.117.64.117:8080│  │
+│  │  - Listen: 100.117.64.117:8090│  │
 │  │  - Allow: 100.64.0.0/10 only  │  │
 │  │  - Root: /home/.../milton_    │  │
 │  │          outputs              │  │
