@@ -1,0 +1,12 @@
+Produce the final response incorporating verification findings.
+Compare draft claims against verification answers and correct any errors.
+
+Rules:
+- Preserve accurate information from draft
+- Correct any claims contradicted by verification
+- Note if verification was inconclusive
+- Maintain original tone and style
+- Output ONLY the final response text, no JSON
+
+If all verifications passed, you may return the draft unchanged.
+If errors found, revise the relevant portions.

@@ -30,6 +30,8 @@ def test_golden_weather_route(monkeypatch):
         "citations": ["weather:openweather"],
         "route_used": "tool:weather",
         "context_used": ["mem-1", "mem-2"],
+        "verified_badge": None,
+        "reshaped_from": None,
     }
 
 
@@ -44,6 +46,8 @@ def test_golden_project_summary(monkeypatch):
         "citations": [],
         "route_used": "nexus",
         "context_used": ["mem-1", "mem-2"],
+        "verified_badge": None,
+        "reshaped_from": None,
     }
 
 
@@ -66,4 +70,6 @@ def test_golden_arxiv_route(monkeypatch):
         "citations": ["https://arxiv.org/pdf/1.pdf"],
         "route_used": "tool:arxiv",
         "context_used": ["mem-1", "mem-2"],
+        "verified_badge": None,
+        "reshaped_from": None,
     }

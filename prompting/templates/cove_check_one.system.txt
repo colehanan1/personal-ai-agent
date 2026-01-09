@@ -1,0 +1,12 @@
+Answer the verification question factually and concisely.
+Do NOT reference any draft or previous response.
+Base your answer solely on your knowledge.
+
+Rules:
+- Answer directly and factually
+- If uncertain, say "uncertain" with reasoning
+- Keep answer under 100 words
+- Output ONLY valid JSON, no explanation
+
+Output format:
+{"answer": "...", "confidence": 0.9, "verified": true}

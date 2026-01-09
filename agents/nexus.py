@@ -42,6 +42,16 @@ from phd_context import (
     is_phd_related,
 )
 
+# Import prompting pipeline (optional - degrades gracefully if not available)
+try:
+    from prompting import PromptingPipeline, PromptingConfig, PipelineResult
+    PROMPTING_AVAILABLE = True
+except ImportError:
+    PROMPTING_AVAILABLE = False
+    PromptingPipeline = None
+    PromptingConfig = None
+    PipelineResult = None
+
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -120,6 +130,8 @@ class Response:
     citations: list[str]
     route_used: str
     context_used: list[str]
+    verified_badge: Optional[str] = None
+    reshaped_from: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -127,6 +139,8 @@ class Response:
             "citations": list(self.citations),
             "route_used": self.route_used,
             "context_used": list(self.context_used),
+            "verified_badge": self.verified_badge,
+            "reshaped_from": self.reshaped_from,
         }
 
 
@@ -183,6 +197,18 @@ class NEXUS:
         self.web_lookup_max_results = int(os.getenv("WEB_LOOKUP_MAX_RESULTS", "5"))
         self.tool_registry = get_tool_registry()
         self._register_default_tools()
+
+        # Initialize prompting pipeline if available
+        self._prompting_pipeline: Optional["PromptingPipeline"] = None
+        self._prompting_config: Optional["PromptingConfig"] = None
+        if PROMPTING_AVAILABLE:
+            try:
+                config = PromptingConfig.from_env()
+                self._prompting_config = config
+                self._prompting_pipeline = PromptingPipeline(config=config)
+                logger.info("Prompting pipeline initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize prompting pipeline: {e}")
 
         logger.info("NEXUS agent initialized")
 
@@ -738,6 +764,41 @@ class NEXUS:
 
     def process_message(self, message: str) -> Response:
         """Process a user message through the deterministic NEXUS pipeline."""
+        original_message = message
+        reshaped_prompt_info: Optional[str] = None
+        include_inspect = False
+        is_trivial = True  # Default to trivial (no CoVe)
+        pipeline_result = None
+
+        # Run prompting pipeline if available and enabled
+        if self._prompting_pipeline is not None:
+            try:
+                pipeline_result = self._prompting_pipeline.run(
+                    message,
+                    include_reshaped_prompt=True,  # Always compute, conditionally show
+                )
+
+                # Use reshaped prompt for downstream processing
+                if pipeline_result.artifacts and pipeline_result.artifacts.prompt_spec:
+                    spec = pipeline_result.artifacts.prompt_spec
+                    if spec.was_modified():
+                        message = spec.reshaped_prompt
+                        logger.debug(f"Prompt reshaped: '{original_message[:50]}...' -> '{message[:50]}...'")
+
+                # Store reshaped prompt info for potential inclusion in response
+                if pipeline_result.reshaped_prompt:
+                    reshaped_prompt_info = pipeline_result.reshaped_prompt
+                    # Check if user explicitly requested to see the reshaped prompt
+                    include_inspect = self._check_inspect_request(original_message)
+
+                # Extract triviality from classification metadata
+                if pipeline_result.artifacts and pipeline_result.artifacts.metadata:
+                    classification = pipeline_result.artifacts.metadata.get("classification", {})
+                    is_trivial = classification.get("is_trivial", True)
+
+            except Exception as e:
+                logger.warning(f"Prompting pipeline failed, using original message: {e}")
+
         context_packet = self.build_context(message)
         routing = self.route_request(message, context_packet=context_packet)
         context_ids = context_packet.context_ids
@@ -772,17 +833,41 @@ class NEXUS:
                 "and confirm LLM_API_URL is reachable."
             )
 
-        # Tag memory with PhD if relevant
+        # Run CoVe on non-trivial responses (config-gated)
+        verified_badge: Optional[str] = None
+        if (
+            self._prompting_pipeline is not None
+            and self._prompting_config is not None
+            and self._prompting_config.enable_cove_for_responses
+            and not is_trivial
+        ):
+            try:
+                cove_result = self._prompting_pipeline.run(
+                    response_text,
+                    mode="full_answer",
+                )
+                response_text = cove_result.response
+                verified_badge = cove_result.verified_badge
+                logger.debug(f"Response verified with badge: {verified_badge}")
+            except Exception as e:
+                logger.warning(f"CoVe verification for response failed: {e}")
+
+        # Append reshaped prompt info to response if user requested inspect
+        if include_inspect and reshaped_prompt_info:
+            response_text = f"{response_text}\n\n---\n{reshaped_prompt_info}"
+
+        # Tag memory with PhD if relevant (use original message for memory)
         tags = ["request", f"route:{route_label}"]
         importance = 0.2
 
-        if is_phd_related(message):
+        if is_phd_related(original_message):
             tags.extend(["phd", "research"])
             importance = 0.4  # Higher importance for PhD-related messages
 
+        # Record original user message to memory (not reshaped)
         record_memory(
             "NEXUS",
-            message,
+            original_message,
             memory_type="crumb",
             tags=tags,
             importance=importance,
@@ -803,6 +888,20 @@ class NEXUS:
             citations=citations,
             route_used=route_label,
             context_used=context_ids,
+            verified_badge=verified_badge,
+            reshaped_from=reshaped_prompt_info if include_inspect else None,
+        )
+
+    def _check_inspect_request(self, message: str) -> bool:
+        """Check if user requested to inspect the reshaped prompt."""
+        text = message.strip().lower()
+        return (
+            "/show_prompt" in text
+            or "/inspect_prompt" in text
+            or text.endswith("inspect prompt")
+            or text.endswith("show prompt")
+            or text.endswith("show reshaped")
+            or text.endswith("show reshaped prompt")
         )
 
     def _should_use_web_lookup(self, message: str, use_web: Optional[bool]) -> bool:

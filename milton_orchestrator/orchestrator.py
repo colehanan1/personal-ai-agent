@@ -107,6 +107,21 @@ class Orchestrator:
             )
             self.reminder_scheduler.start()
 
+        # Initialize prompting pipeline if available
+        self._prompting_pipeline = None
+        try:
+            from prompting import PromptingConfig, PromptingPipeline
+            prompting_config = PromptingConfig.from_env()
+            self._prompting_pipeline = PromptingPipeline(
+                config=prompting_config,
+                repo_root=config.target_repo,
+            )
+            logger.info("Prompting pipeline initialized for orchestrator")
+        except ImportError:
+            logger.debug("Prompting module not available")
+        except Exception as e:
+            logger.warning(f"Failed to initialize prompting pipeline: {e}")
+
         logger.info(f"Orchestrator initialized (dry_run={dry_run})")
         logger.info(f"Target repo: {config.target_repo}")
         logger.info(f"Listening on: {config.ask_topic}")
@@ -224,6 +239,26 @@ class Orchestrator:
                     f"[{request_id}] Building agent prompts...",
                     title="Prompt Build",
                 )
+
+            # Run prompting pipeline for agent prompt generation (quality checks + CoVe)
+            verified_badge = None
+            if self._prompting_pipeline is not None:
+                try:
+                    pipeline_result = self._prompting_pipeline.run(
+                        content,
+                        request_id=request_id,
+                        mode="generate_agent_prompt",
+                    )
+                    content = pipeline_result.response  # Use verified/revised prompt
+                    verified_badge = pipeline_result.verified_badge
+                    logger.debug(
+                        f"Prompt verified for {request_id}: badge={verified_badge}"
+                    )
+                    # Store artifacts (best-effort)
+                    if pipeline_result.artifacts:
+                        logger.debug(f"Pipeline artifacts stored for {request_id}")
+                except Exception as e:
+                    logger.warning(f"Prompting pipeline failed for {request_id}: {e}")
 
             # Step 3: Build prompts
             agent_prompt = self.prompt_builder.build_agent_prompt(

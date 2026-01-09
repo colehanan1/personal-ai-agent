@@ -1,0 +1,1 @@
+"""CoVe prompt templates."""

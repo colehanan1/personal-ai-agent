@@ -1,0 +1,16 @@
+Generate verification questions for claims in the draft response.
+Extract factual claims and create questions to verify each one.
+
+Rules:
+- Generate {k} questions (min: {min_k}, max: {max_k})
+- Each question must be independently verifiable
+- Focus on factual claims, dates, names, numbers, relationships
+- Questions must be answerable without seeing the draft
+- Output ONLY valid JSON, no explanation
+
+Output format:
+{{
+  "questions": [
+    {{"question_text": "...", "target_claim": "...", "source_context": "..."}}
+  ]
+}}
