@@ -85,3 +85,100 @@ def test_request_memory_captured_once(config, monkeypatch):
     assert "chat" in item.tags
     assert "source:ntfy" in item.tags
     assert repo_root == config.target_repo
+
+
+def test_request_memory_captured_from_attachment(config, monkeypatch):
+    orchestrator = Orchestrator(config, dry_run=True)
+    orchestrator.publish_status = MagicMock()
+    orchestrator.ntfy_client = MagicMock()
+    orchestrator.perplexity_client = MagicMock()
+    orchestrator.claude_runner = MagicMock()
+    orchestrator.codex_runner = MagicMock()
+
+    calls = []
+
+    def fake_add_memory(item, repo_root=None):
+        calls.append((item, repo_root))
+        return "mem-attachment"
+
+    def fake_get_memory_modules():
+        return MemoryItem, fake_add_memory
+
+    monkeypatch.setattr(orchestrator_module, "_get_memory_modules", fake_get_memory_modules)
+    monkeypatch.setenv("MILTON_MEMORY_ENABLED", "true")
+
+    raw_data = {
+        "attachment": {
+            "name": "prompt.json",
+            "content": {"input": "hello from attachment"},
+        }
+    }
+
+    orchestrator.process_incoming_message(
+        "msg-attach", config.ask_topic, "", raw_data=raw_data
+    )
+
+    assert len(calls) == 1
+    item, repo_root = calls[0]
+    assert "hello from attachment" in item.content
+    assert repo_root == config.target_repo
+
+
+def test_request_memory_chunking_for_large_inputs(config, monkeypatch):
+    config.max_output_size = 10
+    orchestrator = Orchestrator(config, dry_run=True)
+    orchestrator.publish_status = MagicMock()
+    orchestrator.ntfy_client = MagicMock()
+    orchestrator.perplexity_client = MagicMock()
+    orchestrator.claude_runner = MagicMock()
+    orchestrator.codex_runner = MagicMock()
+
+    calls = []
+
+    def fake_add_memory(item, repo_root=None):
+        calls.append(item)
+        return f"mem-{len(calls)}"
+
+    def fake_get_memory_modules():
+        return MemoryItem, fake_add_memory
+
+    monkeypatch.setattr(orchestrator_module, "_get_memory_modules", fake_get_memory_modules)
+    monkeypatch.setenv("MILTON_MEMORY_ENABLED", "true")
+
+    long_text = "RESEARCH: " + ("x" * 35)
+    raw_data = {
+        "attachment": {
+            "name": "payload.json",
+            "content": {"input": long_text},
+        }
+    }
+
+    orchestrator.process_incoming_message(
+        "msg-chunk", config.ask_topic, "", raw_data=raw_data
+    )
+
+    assert len(calls) > 1
+    assert any(tag.startswith("chunk:") for tag in calls[0].tags)
+
+
+def test_request_memory_acknowledged(config, monkeypatch):
+    orchestrator = Orchestrator(config, dry_run=True)
+    orchestrator.publish_status = MagicMock()
+    orchestrator.ntfy_client = MagicMock()
+    orchestrator.perplexity_client = MagicMock()
+    orchestrator.claude_runner = MagicMock()
+    orchestrator.codex_runner = MagicMock()
+
+    def fake_add_memory(item, repo_root=None):
+        return "mem-123"
+
+    def fake_get_memory_modules():
+        return MemoryItem, fake_add_memory
+
+    monkeypatch.setattr(orchestrator_module, "_get_memory_modules", fake_get_memory_modules)
+    monkeypatch.setenv("MILTON_MEMORY_ENABLED", "true")
+
+    orchestrator.process_incoming_message("msg-ack", config.ask_topic, "hello there")
+
+    messages = [call.args[0] for call in orchestrator.publish_status.call_args_list]
+    assert any("mem-123" in message for message in messages)

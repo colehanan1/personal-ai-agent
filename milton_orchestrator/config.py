@@ -2,11 +2,14 @@
 
 import os
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .state_paths import resolve_state_dir
+
+if TYPE_CHECKING:
+    from prompting import PromptingConfig
 
 
 @dataclass
@@ -69,6 +72,9 @@ class Config:
     # Processing settings
     request_timeout: int
     ntfy_reconnect_backoff_max: int
+
+    # Prompting middleware (optional - lazy loaded)
+    prompting: Optional["PromptingConfig"] = field(default=None)
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -206,6 +212,14 @@ class Config:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Load prompting middleware config (optional)
+        prompting_config = None
+        try:
+            from prompting import PromptingConfig
+            prompting_config = PromptingConfig.from_env()
+        except ImportError:
+            pass  # Prompting module not available
+
         return cls(
             ntfy_base_url=ntfy_base_url,
             ntfy_max_chars=ntfy_max_chars,
@@ -248,6 +262,7 @@ class Config:
             output_filename_template=output_filename_template,
             request_timeout=request_timeout,
             ntfy_reconnect_backoff_max=ntfy_reconnect_backoff_max,
+            prompting=prompting_config,
         )
 
     def validate(self) -> None:

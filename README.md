@@ -446,7 +446,8 @@ Milton will continuously evolve through a three-prong approach:
 - **[Technical Architecture](docs/04-architecture.md)** - System design, data flow, and integration
 
 ### Features & Capabilities
-- **[Reminders System](docs/reminders.md)** - Persistent reminders + push notifications via ntfy (NEW!)
+- **[Reminders System](docs/reminders.md)** - Persistent reminders + push notifications via ntfy
+- **[Prompting Middleware](prompting/README.md)** - Prompt reshaping + Chain-of-Verification scaffold (NEW!)
 
 ### Current System (Phase 2)
 - **[Phase 2 Deployment Guide](docs/PHASE2_DEPLOYMENT.md)** - Step-by-step setup instructions
@@ -518,6 +519,7 @@ milton/
 ├── agents/              # NEXUS, CORTEX, FRONTIER implementations
 ├── integrations/        # Weather, arXiv, News, Home Assistant APIs
 ├── memory/              # Weaviate operations (init, CRUD)
+├── prompting/           # Prompting middleware (reshape + CoVe scaffold)
 ├── scripts/             # Automation wrappers, vLLM startup
 ├── systemd/             # User service & timer unit files
 ├── tests/               # Integration test suite

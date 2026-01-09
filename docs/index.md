@@ -20,6 +20,7 @@ Welcome to Milton's comprehensive documentation. This guide will help you unders
 
 ### System Components
 - [Memory System](MEMORY_SPEC.md) - 3-tier memory storage and retrieval
+- [Prompting Middleware](../prompting/README.md) - Prompt reshaping + Chain-of-Verification (scaffold)
 - [Agent Context Rules](AGENT_CONTEXT_RULES.md) - Evidence-backed routing
 - [Daily OS Loop](DAILY_OS.md) - Automation workflows
 

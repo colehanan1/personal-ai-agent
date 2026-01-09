@@ -22,6 +22,8 @@ class NtfyMessage:
         self.id = raw_data.get("id", "")
         self.time = raw_data.get("time", 0)
         self.topic = raw_data.get("topic", "")
+        self.attachment = raw_data.get("attachment")
+        self.attachments = raw_data.get("attachments")
 
     def is_message_event(self) -> bool:
         """Check if this is a message event (not keepalive or open)"""

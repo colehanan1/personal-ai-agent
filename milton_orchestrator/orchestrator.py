@@ -17,6 +17,7 @@ import requests
 from .config import Config
 from .ntfy_client import NtfyClient, subscribe_topics_with_reconnect
 from .ntfy_summarizer import truncate_text
+from .input_normalizer import normalize_incoming_input
 from .output_publisher import publish_response
 from .perplexity_client import PerplexityClient, fallback_prompt_optimizer
 from .prompt_builder import ClaudePromptBuilder
@@ -160,43 +161,98 @@ class Orchestrator:
         content: str,
         mode_tag: Optional[str],
         topic: str,
-    ) -> None:
+        *,
+        input_type: str = "text",
+        structured_fields: Optional[dict[str, list[str]]] = None,
+    ) -> list[str]:
         if not self._memory_enabled():
-            return
+            return []
         if not content.strip():
-            return
+            return []
 
-        tags = ["source:ntfy"]
+        tags = ["source:ntfy", f"input:{input_type}"]
         if mode_tag:
             tags.append(mode_tag)
+        if structured_fields:
+            if structured_fields.get("goals"):
+                tags.append("goal")
+            if structured_fields.get("summaries"):
+                tags.append("summary")
 
         try:
             MemoryItem, add_memory = _get_memory_modules()
         except Exception as exc:
             logger.warning("Failed to load memory modules: %s", exc)
-            return
+            return []
 
-        memory_item = MemoryItem(
-            agent="orchestrator",
-            type="request",
-            content=truncate_text(content.strip(), max_chars=self.config.max_output_size),
-            tags=tags,
-            importance=0.35,
-            source="ntfy",
-            request_id=request_id,
-            evidence=[f"topic:{topic}"],
-        )
+        chunks = _chunk_text(content.strip(), max_chars=self.config.max_output_size)
+        total_chunks = len(chunks)
+        memory_ids: list[str] = []
+        for idx, chunk in enumerate(chunks, start=1):
+            chunk_tags = list(tags)
+            if total_chunks > 1:
+                chunk_tags.append(f"chunk:{idx}/{total_chunks}")
+            memory_item = MemoryItem(
+                agent="orchestrator",
+                type="request",
+                content=chunk,
+                tags=chunk_tags,
+                importance=0.35,
+                source="ntfy",
+                request_id=request_id,
+                evidence=[f"topic:{topic}"],
+            )
 
-        try:
-            add_memory(memory_item, repo_root=self.config.target_repo)
+            try:
+                memory_id = add_memory(memory_item, repo_root=self.config.target_repo)
+                if memory_id:
+                    memory_ids.append(memory_id)
+            except Exception as exc:
+                logger.warning("Failed to record request memory: %s", exc)
+
+        if memory_ids:
             logger.info(
-                "Recorded request memory: request_id=%s mode=%s topic=%s",
+                "Recorded request memory: request_id=%s mode=%s topic=%s ids=%s",
                 request_id,
                 mode_tag or "unknown",
                 topic,
+                memory_ids,
             )
-        except Exception as exc:
-            logger.warning("Failed to record request memory: %s", exc)
+        return memory_ids
+
+    def _persist_attachments(self, request_id: str, attachments) -> list[Path]:
+        if not attachments:
+            return []
+
+        base_dir = self.config.state_dir / "attachments" / request_id
+        base_dir.mkdir(parents=True, exist_ok=True)
+        stored_paths: list[Path] = []
+
+        for idx, attachment in enumerate(attachments, start=1):
+            name = getattr(attachment, "name", None) or f"attachment_{idx:02d}"
+            safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", str(name)).strip("._")
+            if not safe_name:
+                safe_name = f"attachment_{idx:02d}"
+            path = base_dir / f"{idx:02d}_{safe_name}.json"
+            payload = {
+                "name": getattr(attachment, "name", None),
+                "content_type": getattr(attachment, "content_type", None),
+                "size": getattr(attachment, "size", None),
+                "url": getattr(attachment, "url", None),
+                "parse_error": getattr(attachment, "parse_error", None),
+                "raw": getattr(attachment, "raw", None),
+                "text": getattr(attachment, "text", None),
+            }
+            try:
+                path.write_text(
+                    json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+                stored_paths.append(path)
+            except OSError as exc:
+                logger.warning("Failed to persist attachment %s: %s", name, exc)
+
+        return stored_paths
 
     def process_code_request(self, request_id: str, content: str):
         """Process a legacy CODE request (unused in new routing)."""
@@ -683,16 +739,64 @@ class Orchestrator:
 
         return "CHAT", text.strip(), None
 
-    def process_incoming_message(self, message_id: str, topic: str, message: str):
-        normalized_message = _normalize_message_text(message)
-        request_id = self.generate_request_id(message_id, normalized_message)
-        mode, payload, reminder_kind = self.route_message(topic, normalized_message)
+    def process_incoming_message(
+        self,
+        message_id: str,
+        topic: str,
+        message: str,
+        raw_data: Optional[dict[str, object]] = None,
+    ):
+        normalized = normalize_incoming_input(message, raw_data=raw_data)
+        request_id = self.generate_request_id(message_id, normalized.semantic_input)
+        mode, payload, reminder_kind = self.route_message(topic, normalized.semantic_input)
         mode_tag = _mode_tag(mode, reminder_kind)
 
-        self._record_request_memory(request_id, normalized_message, mode_tag, topic)
+        attachment_paths = self._persist_attachments(request_id, normalized.attachments)
+        if attachment_paths:
+            logger.info(
+                "Stored %d attachment(s) for request_id=%s",
+                len(attachment_paths),
+                request_id,
+            )
+
+        memory_ids = self._record_request_memory(
+            request_id,
+            normalized.semantic_input,
+            mode_tag,
+            topic,
+            input_type=normalized.input_type,
+            structured_fields=normalized.structured_fields,
+        )
+
+        logger.info(
+            "Normalized input: type=%s length=%d attachments=%d",
+            normalized.input_type,
+            normalized.normalized_length,
+            len(normalized.attachments),
+        )
+        logger.info(
+            "Routing decision: mode=%s input_type=%s length=%d",
+            mode,
+            normalized.input_type,
+            normalized.normalized_length,
+        )
+        logger.info(
+            "Memory capture: ran=%s ids=%s",
+            bool(memory_ids),
+            memory_ids or "none",
+        )
+
+        memory_note = ""
+        if memory_ids:
+            if len(memory_ids) == 1:
+                memory_note = f" | Memory: {memory_ids[0]}"
+            else:
+                memory_note = (
+                    f" | Memory: {memory_ids[0]} (+{len(memory_ids) - 1} more)"
+                )
 
         self.publish_status(
-            f"[{request_id}] Mode: {mode}",
+            f"[{request_id}] Mode: {mode}{memory_note}",
             title="Request Acknowledged",
         )
 
@@ -833,7 +937,7 @@ class Orchestrator:
                 logger.info(f"New message received: {msg.id}")
                 logger.info(f"Content preview: {msg.message[:100]}...")
 
-                self.process_incoming_message(msg.id, msg.topic, msg.message)
+                self.process_incoming_message(msg.id, msg.topic, msg.message, raw_data=msg.raw)
 
         except KeyboardInterrupt:
             logger.info("Orchestrator stopped by user")
@@ -908,7 +1012,7 @@ def _match_prefix(text: str) -> Optional[tuple[str, str]]:
 def _strip_prefix_with_optional_brackets(text: str, prefix: str) -> str:
     pattern = re.compile(
         rf"^\s*\[?\s*{re.escape(prefix)}\s*:\s*(.*)$",
-        re.IGNORECASE,
+        re.IGNORECASE | re.DOTALL,
     )
     match = pattern.match(text)
     if not match:
@@ -961,6 +1065,14 @@ def _normalize_message_text(message: str) -> str:
     text = re.sub(r"^provided input\s*[:\-]\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^\[[^\]]+\]\s*[:\-]\s*", "", text)
     return text.strip()
+
+
+def _chunk_text(text: str, max_chars: int) -> list[str]:
+    if not text:
+        return []
+    if max_chars <= 0 or len(text) <= max_chars:
+        return [text]
+    return [text[idx : idx + max_chars] for idx in range(0, len(text), max_chars)]
 
 
 _MEMORY_CACHE = None

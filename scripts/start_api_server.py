@@ -35,6 +35,7 @@ from goals.api import add_goal, list_goals
 from memory.init_db import create_schema, get_client
 from memory.operations import MemoryOperations
 from milton_orchestrator.state_paths import resolve_state_dir
+from milton_orchestrator.input_normalizer import normalize_incoming_input
 
 logging.basicConfig(
     level=logging.INFO,
@@ -114,6 +115,43 @@ def _chunk_text(text: str, words_per_chunk: int = 6) -> Iterable[str]:
         yield buffer
 
 
+def _persist_attachments(
+    request_id: str, attachments: list[Any], state_dir: Path
+) -> list[Path]:
+    if not attachments:
+        return []
+
+    base_dir = state_dir / "attachments" / request_id
+    base_dir.mkdir(parents=True, exist_ok=True)
+    stored_paths: list[Path] = []
+
+    for idx, attachment in enumerate(attachments, start=1):
+        name = getattr(attachment, "name", None) or f"attachment_{idx:02d}"
+        safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", str(name)).strip("._")
+        if not safe_name:
+            safe_name = f"attachment_{idx:02d}"
+        path = base_dir / f"{idx:02d}_{safe_name}.json"
+        payload = {
+            "name": getattr(attachment, "name", None),
+            "content_type": getattr(attachment, "content_type", None),
+            "size": getattr(attachment, "size", None),
+            "url": getattr(attachment, "url", None),
+            "parse_error": getattr(attachment, "parse_error", None),
+            "raw": getattr(attachment, "raw", None),
+            "text": getattr(attachment, "text", None),
+        }
+        try:
+            path.write_text(
+                json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            stored_paths.append(path)
+        except OSError as exc:
+            logger.warning("Failed to persist attachment %s: %s", name, exc)
+
+    return stored_paths
+
+
 _GOAL_INTENT_PATTERNS = [
     re.compile(r"^\s*(?:i\s+want\s+to|i\s+need\s+to|i\s+plan\s+to)\s+(?P<goal>.+)$", re.I),
     re.compile(r"^\s*(?:i\s+should)\s+(?P<goal>.+)$", re.I),
@@ -134,12 +172,16 @@ def _normalize_goal_text(text: str) -> str:
 
 
 def _extract_goal_text(query: str) -> Optional[str]:
-    for pattern in _GOAL_INTENT_PATTERNS:
-        match = pattern.match(query)
-        if match:
-            goal = match.group("goal").strip()
-            normalized = _normalize_goal_text(goal)
-            return normalized or None
+    for line in query.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        for pattern in _GOAL_INTENT_PATTERNS:
+            match = pattern.match(stripped)
+            if match:
+                goal = match.group("goal").strip()
+                normalized = _normalize_goal_text(goal)
+                return normalized or None
     return None
 
 
@@ -153,8 +195,17 @@ def _goal_exists(goal_text: str) -> Optional[str]:
     return None
 
 
-def _capture_goal(query: str) -> Optional[Dict[str, str]]:
-    goal_text = _extract_goal_text(query)
+def _capture_goal(
+    query: str, goal_candidates: Optional[list[str]] = None
+) -> Optional[Dict[str, str]]:
+    candidate_text = None
+    if goal_candidates:
+        for candidate in goal_candidates:
+            candidate_text = _normalize_goal_text(str(candidate))
+            if candidate_text:
+                break
+
+    goal_text = candidate_text or _extract_goal_text(query)
     if not goal_text:
         return None
 
@@ -370,12 +421,16 @@ def _get_memory_snapshot() -> Tuple[int, float]:
 @app.route("/api/ask", methods=["POST"])
 def ask() -> Any:
     data = request.get_json(silent=True) or {}
-    query = str(data.get("query", "")).strip()
+    query_raw = str(data.get("query", "")).strip()
+    normalized = normalize_incoming_input(query_raw, raw_data=data)
+    query = normalized.semantic_input.strip()
 
     if not query:
         return jsonify({"error": "Missing 'query'"}), 400
 
-    goal_capture = _capture_goal(query)
+    goal_capture = _capture_goal(
+        query, goal_candidates=normalized.structured_fields.get("goals")
+    )
 
     agent_override = data.get("agent")
     use_web = data.get("use_web")
@@ -391,6 +446,12 @@ def ask() -> Any:
     target_upper = target.upper()
     integration_target = None
 
+    logger.info(
+        "Routing decision: target=%s confidence=%.2f",
+        target,
+        routing.get("confidence", 0.0),
+    )
+
     if target_upper in AGENT_MAP:
         agent_assigned = target_upper
     else:
@@ -399,6 +460,23 @@ def ask() -> Any:
 
     request_id = _make_request_id()
     created_at = _now_iso()
+
+    attachment_paths = _persist_attachments(
+        request_id, normalized.attachments, STATE_DIR
+    )
+    if attachment_paths:
+        logger.info(
+            "Stored %d attachment(s) for request_id=%s",
+            len(attachment_paths),
+            request_id,
+        )
+
+    logger.info(
+        "Normalized input: type=%s length=%d attachments=%d",
+        normalized.input_type,
+        normalized.normalized_length,
+        len(normalized.attachments),
+    )
 
     with _REQUESTS_LOCK:
         _REQUESTS[request_id] = {

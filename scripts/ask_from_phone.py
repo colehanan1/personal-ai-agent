@@ -142,6 +142,18 @@ def determine_action(prefix: Optional[str], query: str) -> str:
     elif prefix in ["cortex", "frontier"]:
         lower_q = query.lower()
 
+        if prefix == "cortex":
+            cortex_keywords = [
+                "analyze",
+                "research",
+                "discover",
+                "summarize",
+                "overnight",
+                "tonight",
+            ]
+            if any(re.search(rf"\b{kw}\b", lower_q) for kw in cortex_keywords):
+                return "enqueue_job"
+
         # Explicit phrases that signal a queued/background job
         phrase_patterns = [
             r"\brun overnight\b",

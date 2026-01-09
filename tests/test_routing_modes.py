@@ -91,6 +91,28 @@ def test_research_mode(config):
     orchestrator.codex_runner.run.assert_not_called()
 
 
+def test_research_mode_attachment(config):
+    orchestrator = make_orchestrator(config)
+    orchestrator.claude_runner = MagicMock()
+    orchestrator.codex_runner = MagicMock()
+
+    raw_data = {
+        "attachment": {
+            "name": "payload.json",
+            "type": "application/json",
+            "content": {"input": "RESEARCH: do thing"},
+        }
+    }
+
+    orchestrator.process_incoming_message(
+        "msg-2b", config.ask_topic, "", raw_data=raw_data
+    )
+
+    orchestrator.perplexity_client.research_and_optimize.assert_called_once()
+    orchestrator.claude_runner.run.assert_not_called()
+    orchestrator.codex_runner.run.assert_not_called()
+
+
 def test_claude_mode_prefix(config, tmp_path):
     orchestrator = make_orchestrator(config)
     orchestrator.claude_runner = MagicMock()
@@ -127,6 +149,59 @@ def test_codex_mode_prefix(config):
     )
 
     orchestrator.process_incoming_message("msg-4", config.ask_topic, "CODEX: do it")
+
+    orchestrator.codex_runner.run.assert_called_once()
+    orchestrator.claude_runner.run.assert_not_called()
+
+
+def test_claude_mode_attachment(config, tmp_path):
+    orchestrator = make_orchestrator(config)
+    orchestrator.claude_runner = MagicMock()
+    orchestrator.codex_runner = MagicMock()
+
+    orchestrator.claude_runner.check_available.return_value = True
+    orchestrator.claude_runner.run.return_value = ClaudeRunResult(
+        exit_code=0,
+        stdout="ok",
+        stderr="",
+        duration=1.0,
+        success=True,
+    )
+    orchestrator.claude_runner.save_output.return_value = tmp_path / "claude.txt"
+
+    raw_data = {
+        "attachment": {"name": "payload.json", "content": {"input": "CLAUDE: do it"}}
+    }
+
+    orchestrator.process_incoming_message(
+        "msg-claude-attach", config.ask_topic, "", raw_data=raw_data
+    )
+
+    orchestrator.claude_runner.run.assert_called_once()
+    orchestrator.codex_runner.run.assert_not_called()
+
+
+def test_codex_mode_attachment(config):
+    orchestrator = make_orchestrator(config)
+    orchestrator.claude_runner = MagicMock()
+    orchestrator.codex_runner = MagicMock()
+
+    orchestrator.codex_runner.check_available.return_value = True
+    orchestrator.codex_runner.run.return_value = CodexRunResult(
+        exit_code=0,
+        stdout="ok",
+        stderr="",
+        duration=1.0,
+        success=True,
+    )
+
+    raw_data = {
+        "attachment": {"name": "payload.json", "content": {"input": "CODEX: do it"}}
+    }
+
+    orchestrator.process_incoming_message(
+        "msg-codex-attach", config.ask_topic, "", raw_data=raw_data
+    )
 
     orchestrator.codex_runner.run.assert_called_once()
     orchestrator.claude_runner.run.assert_not_called()
