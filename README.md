@@ -184,6 +184,33 @@ Optional: set `STATE_DIR` in `.env` to write goals/queue/inbox outside the repo 
 
 ---
 
+## Milton Outputs Web Viewer
+
+Browse and download Milton's output files from your iPhone or any device on your Tailscale network.
+
+**Quick Setup:**
+```bash
+sudo ./scripts/setup_milton_outputs_server.sh
+```
+
+**Access URL:** `http://100.117.64.117:8080/`
+
+This sets up a persistent, Tailscale-only Nginx server with:
+- Read-only directory listing of `milton_outputs/` (symlinked to `shared_outputs/`)
+- Restricted to Tailscale CGNAT range (100.64.0.0/10)
+- Survives reboots (systemd-managed)
+- No public internet exposure
+
+**Features:**
+- View all Milton request outputs (`milton_req_*.txt`)
+- Download Codex execution logs (`codex_output_*.txt`)
+- Access briefing archives
+- Browse from Safari on iPhone/iPad
+
+See [docs/milton_outputs_server.md](docs/milton_outputs_server.md) for detailed documentation, configuration options, and troubleshooting.
+
+---
+
 ## Usage
 
 ### Interactive Agent Chat
