@@ -23,6 +23,9 @@ from typing import Optional, Dict, Any, List
 from .data_pipeline import DataPipeline
 from .eval_metrics import EvalMetrics, EvaluationResult
 from .adapter_manager import AdapterManager
+from .model_evolution import ModelEvolution, DistillationConfig
+from .model_compression import ModelCompression, QuantizationConfig
+from .model_registry import ModelRegistry
 from milton_orchestrator.state_paths import resolve_state_dir
 
 logger = logging.getLogger(__name__)
@@ -432,6 +435,121 @@ class ContinuousTrainer:
         logger.info("=" * 60)
         
         return summary
+    
+    def finalize_weekly_training(
+        self,
+        adapter_path: Path,
+        adapter_name: str,
+        version: str = "auto",
+        quantization_bits: int = 4,
+        dry_run: bool = False,
+    ) -> Optional[str]:
+        """
+        Finalize weekly training by distilling and quantizing the adapter.
+        
+        This creates an evolved, compressed model ready for edge deployment.
+        
+        Args:
+            adapter_path: Path to trained adapter
+            adapter_name: Name of adapter
+            version: Version string (auto-generated if "auto")
+            quantization_bits: Quantization level (4 or 8)
+            dry_run: Skip actual distillation/quantization
+        
+        Returns:
+            Version string of registered model, or None on failure
+        """
+        logger.info("\n" + "=" * 60)
+        logger.info("Finalizing weekly training: Model Evolution")
+        logger.info("=" * 60)
+        
+        try:
+            # Initialize evolution components
+            model_evolution = ModelEvolution()
+            model_compression = ModelCompression()
+            model_registry = ModelRegistry()
+            
+            # Generate version if auto
+            if version == "auto":
+                from datetime import datetime
+                week_num = datetime.now().isocalendar()[1]
+                version = f"v3.1-week{week_num:02d}"
+            
+            logger.info(f"\n[1/3] Distilling adapter: {adapter_name}")
+            
+            # Distill model
+            distilled_path = model_evolution.models_dir / f"distilled_{version}"
+            distilled_path, distill_metrics = model_evolution.distill_model(
+                base_model_path=self.config.base_model_path,
+                adapter_path=str(adapter_path),
+                output_path=distilled_path,
+                dry_run=dry_run,
+            )
+            
+            logger.info(f"Distilled model: {distilled_path}")
+            logger.info(f"Perplexity: {distill_metrics.perplexity:.2f}")
+            
+            logger.info(f"\n[2/3] Quantizing to {quantization_bits}-bit")
+            
+            # Quantize model
+            quant_config = QuantizationConfig(bits=quantization_bits)
+            quantized_path, quant_metrics = model_compression.quantize_model(
+                model_path=distilled_path,
+                output_name=f"quantized_{version}_{quantization_bits}bit",
+                config=quant_config,
+                dry_run=dry_run,
+            )
+            
+            logger.info(f"Quantized model: {quantized_path}")
+            logger.info(f"Compression ratio: {quant_metrics.compression_ratio:.2f}x")
+            logger.info(f"Size: {quant_metrics.compressed_size_mb:.0f}MB")
+            
+            logger.info(f"\n[3/3] Registering model: {version}")
+            
+            # Get git commit hash
+            commit_hash = None
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    cwd=Path(__file__).parent.parent,
+                )
+                if result.returncode == 0:
+                    commit_hash = result.stdout.strip()
+            except Exception:
+                pass
+            
+            # Combine metrics
+            combined_metrics = {
+                "distillation": distill_metrics.to_dict(),
+                "quantization": quant_metrics.to_dict(),
+                "adapter_name": adapter_name,
+            }
+            
+            # Register in model registry
+            model_registry.register_model(
+                version=version,
+                base_model=self.config.base_model_path,
+                model_path=quantized_path,
+                metrics=combined_metrics,
+                distilled_from=adapter_name,
+                quantization=f"{quantization_bits}bit",
+                commit_hash=commit_hash,
+                set_active=True,
+            )
+            
+            logger.info("\n" + "=" * 60)
+            logger.info(f"Model evolution complete: {version}")
+            logger.info(f"Model path: {quantized_path}")
+            logger.info("=" * 60)
+            
+            return version
+            
+        except Exception as e:
+            logger.error(f"Model evolution failed: {e}", exc_info=True)
+            return None
 
 
 def train_lora_adapter(

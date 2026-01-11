@@ -3,10 +3,11 @@ Unit tests for model registry management.
 
 Tests:
 - Registry loading and saving
-- Adapter lookup operations
-- Status transitions
-- Promotion workflows
+- Model registration
+- Version lookup operations
+- Active model management
 - Rollback functionality
+- Model comparison
 """
 from __future__ import annotations
 
@@ -21,285 +22,336 @@ import pytest
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
-from scripts.promote_adapter import AdapterRegistry
+from training.model_registry import ModelRegistry, ModelRegistryEntry
 
 
 @pytest.fixture
-def temp_registry(tmp_path):
-    """Create a temporary registry file for testing."""
-    registry_path = tmp_path / "registry.json"
-
-    registry_data = {
-        "version": "1.0",
-        "base_model": {
-            "name": "Llama-3.1-8B-Instruct-HF",
-            "path": "/path/to/model"
-        },
-        "adapters": [
-            {
-                "run_id": "lora_20260101_120000",
-                "status": "archived",
-                "created_at": "2026-01-01T12:00:00Z",
-                "archived_at": "2026-01-05T10:00:00Z"
-            },
-            {
-                "run_id": "lora_20260105_140000",
-                "status": "production",
-                "created_at": "2026-01-05T14:00:00Z",
-                "promoted_at": "2026-01-05T15:00:00Z"
-            },
-            {
-                "run_id": "lora_20260106_090000",
-                "status": "candidate",
-                "created_at": "2026-01-06T09:00:00Z",
-                "promoted_at": "2026-01-06T09:30:00Z"
-            }
-        ]
-    }
-
-    with registry_path.open("w") as f:
-        json.dump(registry_data, f, indent=2)
-
-    return registry_path
+def temp_registry_dir(tmp_path):
+    """Create a temporary directory for registry testing."""
+    models_dir = tmp_path / "models"
+    models_dir.mkdir(parents=True)
+    return models_dir
 
 
-class TestRegistryLoading:
-    """Test registry file operations."""
+@pytest.fixture
+def populated_registry(temp_registry_dir):
+    """Create a registry with test entries."""
+    registry = ModelRegistry(
+        models_dir=temp_registry_dir,
+    )
+    
+    # Add test models
+    registry.register_model(
+        version="v3.1-week01",
+        base_model="llama-3.1-8b",
+        model_path=temp_registry_dir / "model1",
+        metrics={"perplexity": 12.5, "quality": 0.85},
+        quantization="4bit",
+    )
+    
+    registry.register_model(
+        version="v3.1-week02",
+        base_model="llama-3.1-8b",
+        model_path=temp_registry_dir / "model2",
+        metrics={"perplexity": 11.8, "quality": 0.88},
+        quantization="4bit",
+        set_active=True,
+    )
+    
+    registry.register_model(
+        version="v3.1-week03",
+        base_model="llama-3.1-8b",
+        model_path=temp_registry_dir / "model3",
+        metrics={"perplexity": 11.2, "quality": 0.91},
+        quantization="8bit",
+    )
+    
+    return registry
 
-    def test_loads_registry(self, temp_registry):
-        """Should load existing registry."""
-        registry = AdapterRegistry.load(temp_registry)
 
-        assert registry["version"] == "1.0"
-        assert len(registry["adapters"]) == 3
-
-    def test_fails_on_missing_registry(self, tmp_path):
-        """Should raise FileNotFoundError for missing registry."""
-        nonexistent = tmp_path / "nonexistent.json"
-
-        with pytest.raises(FileNotFoundError):
-            AdapterRegistry.load(nonexistent)
-
-    def test_saves_registry(self, temp_registry):
-        """Should save registry with modifications."""
-        reg = AdapterRegistry(temp_registry)
-
-        # Modify
-        reg.registry["adapters"].append({
-            "run_id": "new_adapter",
-            "status": "training"
-        })
-
-        # Save
-        reg.save()
-
+class TestRegistryBasics:
+    """Test basic registry operations."""
+    
+    def test_creates_empty_registry(self, temp_registry_dir):
+        """Should create a new empty registry."""
+        registry = ModelRegistry(models_dir=temp_registry_dir)
+        
+        assert len(registry.entries) == 0
+        assert registry.registry_path.exists()
+    
+    def test_loads_existing_registry(self, populated_registry, temp_registry_dir):
+        """Should load existing registry from disk."""
+        # Create a new registry instance pointing to same path
+        new_registry = ModelRegistry(models_dir=temp_registry_dir)
+        
+        assert len(new_registry.entries) == 3
+    
+    def test_persists_changes(self, populated_registry, temp_registry_dir):
+        """Should save changes to disk."""
+        populated_registry.register_model(
+            version="v3.1-week04",
+            base_model="llama-3.1-8b",
+            model_path=temp_registry_dir / "model4",
+            metrics={"perplexity": 10.9},
+        )
+        
         # Reload and verify
-        reloaded = AdapterRegistry.load(temp_registry)
-        assert len(reloaded["adapters"]) == 4
-        assert reloaded["adapters"][-1]["run_id"] == "new_adapter"
+        new_registry = ModelRegistry(models_dir=temp_registry_dir)
+        assert len(new_registry.entries) == 4
 
 
-class TestAdapterLookup:
-    """Test adapter query operations."""
-
-    def test_gets_adapter_by_run_id(self, temp_registry):
-        """Should find adapter by run_id."""
-        reg = AdapterRegistry(temp_registry)
-
-        adapter = reg.get_adapter("lora_20260105_140000")
-
-        assert adapter is not None
-        assert adapter["status"] == "production"
-
-    def test_returns_none_for_missing_adapter(self, temp_registry):
-        """Should return None for non-existent adapter."""
-        reg = AdapterRegistry(temp_registry)
-
-        adapter = reg.get_adapter("nonexistent")
-
-        assert adapter is None
-
-    def test_gets_adapters_by_status(self, temp_registry):
-        """Should filter adapters by status."""
-        reg = AdapterRegistry(temp_registry)
-
-        archived = reg.get_adapters_by_status("archived")
-        production = reg.get_adapters_by_status("production")
-        candidate = reg.get_adapters_by_status("candidate")
-
-        assert len(archived) == 1
-        assert len(production) == 1
-        assert len(candidate) == 1
-
-    def test_gets_production_adapter(self, temp_registry):
-        """Should get current production adapter."""
-        reg = AdapterRegistry(temp_registry)
-
-        prod = reg.get_production_adapter()
-
-        assert prod is not None
-        assert prod["run_id"] == "lora_20260105_140000"
-
-    def test_returns_none_when_no_production(self, tmp_path):
-        """Should return None when no production adapter exists."""
-        registry_path = tmp_path / "registry.json"
-        registry_data = {
-            "version": "1.0",
-            "base_model": {"name": "test", "path": "/path"},
-            "adapters": [
-                {"run_id": "test", "status": "candidate"}
-            ]
-        }
-        with registry_path.open("w") as f:
-            json.dump(registry_data, f)
-
-        reg = AdapterRegistry(registry_path)
-        prod = reg.get_production_adapter()
-
-        assert prod is None
+class TestModelRegistration:
+    """Test model registration."""
+    
+    def test_registers_model(self, temp_registry_dir):
+        """Should register a new model."""
+        registry = ModelRegistry(models_dir=temp_registry_dir)
+        
+        model_path = temp_registry_dir / "test_model"
+        entry = registry.register_model(
+            version="v1.0",
+            base_model="test-model",
+            model_path=model_path,
+            metrics={"test": 123},
+        )
+        
+        assert entry.version == "v1.0"
+        assert entry.base_model == "test-model"
+        assert not entry.active
+    
+    def test_updates_existing_version(self, populated_registry):
+        """Should update if version already exists."""
+        populated_registry.register_model(
+            version="v3.1-week01",  # Duplicate
+            base_model="llama-3.1-8b",
+            model_path=populated_registry.models_dir / "updated",
+            metrics={"perplexity": 10.0},
+        )
+        
+        # Should still have 3 entries (not 4)
+        assert len(populated_registry.entries) == 3
+        
+        # Should have updated metrics
+        model = populated_registry.get_model("v3.1-week01")
+        assert model.metrics["perplexity"] == 10.0
+    
+    def test_registers_with_metadata(self, temp_registry_dir):
+        """Should store all metadata fields."""
+        registry = ModelRegistry(models_dir=temp_registry_dir)
+        
+        entry = registry.register_model(
+            version="v1.0",
+            base_model="test",
+            model_path=temp_registry_dir / "model",
+            metrics={"key": "value"},
+            distilled_from="adapter-123",
+            quantization="4bit",
+            commit_hash="abc123",
+        )
+        
+        assert entry.distilled_from == "adapter-123"
+        assert entry.quantization == "4bit"
+        assert entry.commit_hash == "abc123"
 
 
-class TestPromotionWorkflows:
-    """Test adapter promotion logic."""
-
-    def test_promotes_to_candidate(self, temp_registry):
-        """Should update status to candidate."""
-        reg = AdapterRegistry(temp_registry)
-
-        # Create new adapter in training status
-        reg.registry["adapters"].append({
-            "run_id": "test_adapter",
-            "status": "training"
-        })
-
-        reg.promote_to_candidate("test_adapter")
-
-        adapter = reg.get_adapter("test_adapter")
-        assert adapter["status"] == "candidate"
-        assert "promoted_at" in adapter
-
-    def test_skips_if_already_candidate(self, temp_registry):
-        """Should not error if already candidate."""
-        reg = AdapterRegistry(temp_registry)
-
-        # This should not raise
-        reg.promote_to_candidate("lora_20260106_090000")
-
-        adapter = reg.get_adapter("lora_20260106_090000")
-        assert adapter["status"] == "candidate"
-
-    def test_promotes_to_production_archives_previous(self, temp_registry):
-        """Should archive current production when promoting new."""
-        reg = AdapterRegistry(temp_registry)
-
-        old_production_id = reg.get_production_adapter()["run_id"]
-
-        reg.promote_to_production("lora_20260106_090000", force=True)
-
-        # Check new production
-        new_prod = reg.get_production_adapter()
-        assert new_prod["run_id"] == "lora_20260106_090000"
-
-        # Check old production is archived
-        old_adapter = reg.get_adapter(old_production_id)
-        assert old_adapter["status"] == "archived"
-        assert "archived_at" in old_adapter
-
-    def test_promotes_when_no_previous_production(self, tmp_path):
-        """Should promote even when no previous production exists."""
-        registry_path = tmp_path / "registry.json"
-        registry_data = {
-            "version": "1.0",
-            "base_model": {"name": "test", "path": "/path"},
-            "adapters": [
-                {"run_id": "test", "status": "candidate"}
-            ]
-        }
-        with registry_path.open("w") as f:
-            json.dump(registry_data, f)
-
-        reg = AdapterRegistry(registry_path)
-        reg.promote_to_production("test", force=True)
-
-        adapter = reg.get_adapter("test")
-        assert adapter["status"] == "production"
+class TestModelRetrieval:
+    """Test model lookup operations."""
+    
+    def test_gets_model_by_version(self, populated_registry):
+        """Should find model by version."""
+        model = populated_registry.get_model("v3.1-week02")
+        
+        assert model is not None
+        assert model.version == "v3.1-week02"
+    
+    def test_returns_none_for_missing(self, populated_registry):
+        """Should return None for non-existent version."""
+        model = populated_registry.get_model("nonexistent")
+        
+        assert model is None
+    
+    def test_gets_latest_model(self, populated_registry):
+        """Should return most recent model."""
+        latest = populated_registry.get_latest()
+        
+        assert latest is not None
+        # Should be week03 (most recent timestamp)
+    
+    def test_gets_active_model(self, populated_registry):
+        """Should return currently active model."""
+        active = populated_registry.get_active()
+        
+        assert active is not None
+        assert active.version == "v3.1-week02"
+        assert active.active is True
+    
+    def test_gets_last_good_model(self, populated_registry):
+        """Should return last known good model."""
+        # Activate a new model (should mark v3.1-week02 as last_good)
+        populated_registry.activate_model("v3.1-week03")
+        
+        last_good = populated_registry.get_last_good()
+        assert last_good is not None
+        assert last_good.version == "v3.1-week02"
 
 
-class TestArchiving:
-    """Test adapter archiving."""
-
-    def test_archives_adapter(self, temp_registry):
-        """Should update status to archived."""
-        reg = AdapterRegistry(temp_registry)
-
-        reg.archive_adapter("lora_20260106_090000")
-
-        adapter = reg.get_adapter("lora_20260106_090000")
-        assert adapter["status"] == "archived"
-        assert "archived_at" in adapter
+class TestModelActivation:
+    """Test model activation."""
+    
+    def test_activates_model(self, populated_registry):
+        """Should set model as active."""
+        result = populated_registry.activate_model("v3.1-week03")
+        
+        assert result is True
+        
+        active = populated_registry.get_active()
+        assert active.version == "v3.1-week03"
+    
+    def test_deactivates_previous(self, populated_registry):
+        """Should deactivate previous active model."""
+        populated_registry.activate_model("v3.1-week03")
+        
+        week02 = populated_registry.get_model("v3.1-week02")
+        assert week02.active is False
+    
+    def test_marks_previous_as_last_good(self, populated_registry):
+        """Should mark previous active as last_good."""
+        populated_registry.activate_model("v3.1-week03")
+        
+        week02 = populated_registry.get_model("v3.1-week02")
+        assert week02.last_good is True
+    
+    def test_fails_for_nonexistent(self, populated_registry):
+        """Should return False for non-existent version."""
+        result = populated_registry.activate_model("nonexistent")
+        
+        assert result is False
 
 
 class TestRollback:
     """Test rollback functionality."""
+    
+    def test_rollback_to_last_good(self, populated_registry):
+        """Should rollback to last known good model."""
+        # Activate week03, making week02 last_good
+        populated_registry.activate_model("v3.1-week03")
+        
+        # Now rollback
+        rolled_back = populated_registry.rollback_model()
+        
+        assert rolled_back is not None
+        assert rolled_back.version == "v3.1-week02"
+        assert rolled_back.active is True
+    
+    def test_rollback_deactivates_current(self, populated_registry):
+        """Should deactivate current active model."""
+        populated_registry.activate_model("v3.1-week03")
+        populated_registry.rollback_model()
+        
+        week03 = populated_registry.get_model("v3.1-week03")
+        assert week03.active is False
+    
+    def test_rollback_fails_without_last_good(self, temp_registry_dir):
+        """Should return None when no last_good exists."""
+        registry = ModelRegistry(models_dir=temp_registry_dir)
+        
+        registry.register_model(
+            version="v1.0",
+            base_model="test",
+            model_path=temp_registry_dir / "model",
+            metrics={},
+            set_active=True,
+        )
+        
+        result = registry.rollback_model()
+        assert result is None
 
-    def test_rollback_to_previous(self, temp_registry):
-        """Should restore most recent archived adapter."""
-        reg = AdapterRegistry(temp_registry)
 
-        # Rollback (should promote most recent archived: lora_20260101_120000)
-        reg.rollback_to_previous()
+class TestModelListing:
+    """Test model listing and filtering."""
+    
+    def test_lists_all_models(self, populated_registry):
+        """Should list all models."""
+        models = populated_registry.list_models()
+        
+        assert len(models) == 3
+    
+    def test_filters_by_base_model(self, populated_registry):
+        """Should filter by base model."""
+        models = populated_registry.list_models(base_model="llama-3.1-8b")
+        
+        assert len(models) == 3
+        
+        models = populated_registry.list_models(base_model="nonexistent")
+        assert len(models) == 0
+    
+    def test_filters_by_quantization(self, populated_registry):
+        """Should filter by quantization level."""
+        models_4bit = populated_registry.list_models(quantization="4bit")
+        models_8bit = populated_registry.list_models(quantization="8bit")
+        
+        assert len(models_4bit) == 2
+        assert len(models_8bit) == 1
+    
+    def test_sorts_by_timestamp(self, populated_registry):
+        """Should return models sorted by timestamp (newest first)."""
+        models = populated_registry.list_models()
+        
+        # Timestamps should be in descending order
+        timestamps = [m.timestamp for m in models]
+        assert timestamps == sorted(timestamps, reverse=True)
 
-        # Check it's now production
-        prod = reg.get_production_adapter()
-        assert prod["run_id"] == "lora_20260101_120000"
-        assert prod["status"] == "production"
 
-    def test_rollback_fails_when_no_archived(self, tmp_path):
-        """Should raise error when no archived adapters exist."""
-        registry_path = tmp_path / "registry.json"
-        registry_data = {
-            "version": "1.0",
-            "base_model": {"name": "test", "path": "/path"},
-            "adapters": [
-                {"run_id": "test", "status": "production"}
-            ]
-        }
-        with registry_path.open("w") as f:
-            json.dump(registry_data, f)
+class TestModelComparison:
+    """Test model comparison functionality."""
+    
+    def test_compares_models(self, populated_registry):
+        """Should compare two models."""
+        comparison = populated_registry.compare_models(
+            "v3.1-week01",
+            "v3.1-week02",
+        )
+        
+        assert comparison["version_a"] == "v3.1-week01"
+        assert comparison["version_b"] == "v3.1-week02"
+        assert "metrics_delta" in comparison
+    
+    def test_calculates_metric_deltas(self, populated_registry):
+        """Should calculate differences in metrics."""
+        comparison = populated_registry.compare_models(
+            "v3.1-week01",
+            "v3.1-week02",
+        )
+        
+        # week02 perplexity (11.8) - week01 perplexity (12.5) = -0.7
+        assert "perplexity" in comparison["metrics_delta"]
+        assert comparison["metrics_delta"]["perplexity"] < 0  # Improved
+    
+    def test_handles_missing_models(self, populated_registry):
+        """Should return empty dict for missing models."""
+        comparison = populated_registry.compare_models(
+            "v3.1-week01",
+            "nonexistent",
+        )
+        
+        assert comparison == {}
 
-        reg = AdapterRegistry(registry_path)
 
-        with pytest.raises(ValueError, match="No archived adapters"):
-            reg.rollback_to_previous()
-
-
-class TestListAdapters:
-    """Test adapter listing functionality."""
-
-    def test_lists_adapters(self, temp_registry, capsys):
-        """Should print adapter list."""
-        reg = AdapterRegistry(temp_registry)
-
-        reg.list_adapters()
-
-        captured = capsys.readouterr()
-        assert "lora_20260101_120000" in captured.out
-        assert "lora_20260105_140000" in captured.out
-        assert "production ★" in captured.out  # Production marker
-
-    def test_handles_empty_registry(self, tmp_path, capsys):
-        """Should handle empty adapter list."""
-        registry_path = tmp_path / "registry.json"
-        registry_data = {
-            "version": "1.0",
-            "base_model": {"name": "test", "path": "/path"},
-            "adapters": []
-        }
-        with registry_path.open("w") as f:
-            json.dump(registry_data, f)
-
-        reg = AdapterRegistry(registry_path)
-        reg.list_adapters()
-
-        captured = capsys.readouterr()
-        assert "No adapters in registry" in captured.out
+class TestRegistryStats:
+    """Test registry statistics."""
+    
+    def test_gets_stats(self, populated_registry):
+        """Should return registry statistics."""
+        stats = populated_registry.get_stats()
+        
+        assert stats["total_models"] == 3
+        assert stats["active_model"] == "v3.1-week02"
+        assert "quantization_breakdown" in stats
+        assert "base_model_breakdown" in stats
+    
+    def test_quantization_breakdown(self, populated_registry):
+        """Should count models by quantization."""
+        stats = populated_registry.get_stats()
+        
+        assert stats["quantization_breakdown"]["4bit"] == 2
+        assert stats["quantization_breakdown"]["8bit"] == 1
