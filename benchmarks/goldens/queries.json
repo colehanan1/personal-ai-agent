@@ -1,0 +1,32 @@
+[
+  {
+    "id": "q1",
+    "query": "What is machine learning and deep learning?",
+    "relevant_doc_ids": ["doc2", "doc4"],
+    "category": "ai"
+  },
+  {
+    "id": "q2",
+    "query": "Tell me about Python programming language",
+    "relevant_doc_ids": ["doc1"],
+    "category": "programming"
+  },
+  {
+    "id": "q3",
+    "query": "What are the capitals of European countries?",
+    "relevant_doc_ids": ["doc3", "doc7"],
+    "category": "geography"
+  },
+  {
+    "id": "q4",
+    "query": "Explain artificial intelligence and NLP",
+    "relevant_doc_ids": ["doc2", "doc4", "doc6"],
+    "category": "ai"
+  },
+  {
+    "id": "q5",
+    "query": "Programming languages for web development",
+    "relevant_doc_ids": ["doc5"],
+    "category": "programming"
+  }
+]

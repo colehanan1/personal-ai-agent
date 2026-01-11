@@ -406,6 +406,70 @@ class ModelRegistry:
             stats["base_model_breakdown"][base] = stats["base_model_breakdown"].get(base, 0) + 1
         
         return stats
+    
+    def get_candidates(self) -> List[ModelRegistryEntry]:
+        """
+        Get all candidate models for selection.
+        
+        Returns:
+            List of ModelRegistryEntry objects
+        """
+        return self.list_models()
+    
+    def get_best_model(
+        self,
+        benchmark_run_path: Optional[Path] = None,
+        weights: Optional[Any] = None,
+        thresholds: Optional[Any] = None,
+    ) -> Optional[str]:
+        """
+        Get the best model based on latest benchmark run.
+        
+        Args:
+            benchmark_run_path: Path to benchmark JSON file (if None, uses latest)
+            weights: Optional SelectionWeights
+            thresholds: Optional SelectionThresholds
+        
+        Returns:
+            Version string of best model, or None if no suitable model found
+        """
+        from benchmarks.select import select_best_model_from_file, SelectionWeights, SelectionThresholds
+        from milton_orchestrator.state_paths import resolve_state_dir
+        
+        # Find latest benchmark run if not specified
+        if benchmark_run_path is None:
+            benchmarks_dir = Path(resolve_state_dir()) / "benchmarks" / "runs"
+            if not benchmarks_dir.exists():
+                logger.warning("No benchmarks directory found")
+                return None
+            
+            runs = sorted(benchmarks_dir.glob("benchmark_*.json"))
+            if not runs:
+                logger.warning("No benchmark runs found")
+                return None
+            
+            benchmark_run_path = runs[-1]
+            logger.info(f"Using latest benchmark run: {benchmark_run_path.name}")
+        
+        # Select best model
+        try:
+            result = select_best_model_from_file(
+                benchmark_path=benchmark_run_path,
+                weights=weights,
+                thresholds=thresholds,
+            )
+            
+            if result.recommended_model:
+                logger.info(f"Best model selected: {result.recommended_model}")
+                logger.info(f"Reason: {result.reason}")
+            else:
+                logger.warning(f"No model selected: {result.reason}")
+            
+            return result.recommended_model
+        
+        except Exception as e:
+            logger.error(f"Failed to select best model: {e}")
+            return None
 
 
 # Module-level convenience functions using singleton registry

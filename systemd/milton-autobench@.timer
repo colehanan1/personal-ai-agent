@@ -1,0 +1,20 @@
+[Unit]
+Description=Milton Autobench Timer
+Documentation=https://github.com/cole-hanan/milton
+Requires=milton-autobench@%i.service
+
+[Timer]
+# Run every 6 hours
+OnCalendar=00/6:00:00
+
+# Run 5 minutes after boot if system was down during scheduled time
+OnBootSec=5min
+
+# If the system was suspended during timer, run on resume
+Persistent=true
+
+# Randomize start time by up to 30 minutes to avoid thundering herd
+RandomizedDelaySec=30min
+
+[Install]
+WantedBy=timers.target

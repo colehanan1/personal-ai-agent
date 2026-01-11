@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from deployment.deployment_manager import DeploymentManager, DeploymentRecord
+from deployment.deployment_manager import DeploymentManager, DeploymentRecord, safe_tar_extract
 from deployment.edge_packager import EdgePackager
 
 
@@ -131,7 +131,7 @@ class TestDeploymentManager:
             extract_path = Path(extract_dir)
             
             with tarfile.open(temp_dirs["bundle_path"], "r:gz") as tar:
-                tar.extractall(extract_path)
+                safe_tar_extract(tar, extract_path)
             
             bundle_dirs = list(extract_path.glob("bundle_*"))
             assert len(bundle_dirs) == 1
@@ -156,7 +156,7 @@ class TestDeploymentManager:
             extract_path = Path(extract_dir)
             
             with tarfile.open(temp_dirs["bundle_path"], "r:gz") as tar:
-                tar.extractall(extract_path)
+                safe_tar_extract(tar, extract_path)
             
             bundle_dir = list(extract_path.glob("bundle_*"))[0]
             
@@ -424,3 +424,113 @@ class TestDeploymentManager:
         
         # Marker should be gone
         assert not marker.exists()
+
+
+class TestSafeTarExtract:
+    """Tests for safe_tar_extract function."""
+    
+    def test_safe_extract_rejects_path_traversal(self):
+        """Test that path traversal is rejected."""
+        import io
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            
+            # Create a malicious tarball with path traversal
+            tar_buffer = io.BytesIO()
+            with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
+                # Add a file with .. in the path
+                info = tarfile.TarInfo(name='../pwned.txt')
+                info.size = 5
+                tar.addfile(info, io.BytesIO(b'pwned'))
+            
+            tar_buffer.seek(0)
+            
+            # Try to extract - should raise ValueError or OutsideDestinationError
+            with tarfile.open(fileobj=tar_buffer, mode='r:gz') as tar:
+                with pytest.raises((ValueError, Exception)):
+                    safe_tar_extract(tar, tmpdir_path)
+            
+            # Verify no file was extracted outside tmpdir
+            parent_files = list(tmpdir_path.parent.glob('pwned.txt'))
+            assert len(parent_files) == 0
+    
+    def test_safe_extract_handles_absolute_path(self):
+        """Test that absolute paths are handled safely."""
+        import io
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            
+            # Create a tarball with absolute path
+            tar_buffer = io.BytesIO()
+            with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
+                info = tarfile.TarInfo(name='/etc/pwned.txt')
+                info.size = 5
+                tar.addfile(info, io.BytesIO(b'pwned'))
+            
+            tar_buffer.seek(0)
+            
+            # Extract - Python 3.12+ strips leading /, older versions may reject
+            try:
+                with tarfile.open(fileobj=tar_buffer, mode='r:gz') as tar:
+                    safe_tar_extract(tar, tmpdir_path)
+                # If it succeeds, verify file wasn't extracted outside tmpdir
+                assert not Path('/etc/pwned.txt').exists()
+            except ValueError:
+                # Older Python rejects it explicitly - that's fine
+                pass
+    
+    def test_safe_extract_rejects_symlink(self):
+        """Test that symlinks are rejected."""
+        import io
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            
+            # Create a tarball with a symlink
+            tar_buffer = io.BytesIO()
+            with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
+                info = tarfile.TarInfo(name='link.txt')
+                info.type = tarfile.SYMTYPE
+                info.linkname = '/etc/passwd'
+                tar.addfile(info)
+            
+            tar_buffer.seek(0)
+            
+            # Try to extract - should raise ValueError or LinkOutsideDestinationError
+            with tarfile.open(fileobj=tar_buffer, mode='r:gz') as tar:
+                with pytest.raises((ValueError, Exception)):
+                    safe_tar_extract(tar, tmpdir_path)
+    
+    def test_safe_extract_allows_normal_files(self):
+        """Test that normal files are extracted correctly."""
+        import io
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmpdir_path = Path(tmpdir)
+            
+            # Create a normal tarball
+            tar_buffer = io.BytesIO()
+            with tarfile.open(fileobj=tar_buffer, mode='w:gz') as tar:
+                # Add a normal file
+                info = tarfile.TarInfo(name='normal.txt')
+                info.size = 5
+                tar.addfile(info, io.BytesIO(b'hello'))
+                
+                # Add a file in a subdirectory
+                info2 = tarfile.TarInfo(name='subdir/file.txt')
+                info2.size = 5
+                tar.addfile(info2, io.BytesIO(b'world'))
+            
+            tar_buffer.seek(0)
+            
+            # Extract - should succeed
+            with tarfile.open(fileobj=tar_buffer, mode='r:gz') as tar:
+                safe_tar_extract(tar, tmpdir_path)
+            
+            # Verify files were extracted
+            assert (tmpdir_path / 'normal.txt').exists()
+            assert (tmpdir_path / 'normal.txt').read_bytes() == b'hello'
+            assert (tmpdir_path / 'subdir' / 'file.txt').exists()
+            assert (tmpdir_path / 'subdir' / 'file.txt').read_bytes() == b'world'

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "doc1",
+    "content": "Python is a high-level programming language known for its simple syntax and readability. It supports multiple programming paradigms including procedural, object-oriented, and functional programming.",
+    "metadata": {"topic": "programming", "language": "python"}
+  },
+  {
+    "id": "doc2",
+    "content": "Machine learning is a subset of artificial intelligence that enables computers to learn from data without being explicitly programmed. It uses algorithms to identify patterns and make predictions.",
+    "metadata": {"topic": "ai", "subtopic": "machine_learning"}
+  },
+  {
+    "id": "doc3",
+    "content": "The capital of France is Paris, which is located in the northern part of the country. Paris is known for landmarks like the Eiffel Tower and the Louvre Museum.",
+    "metadata": {"topic": "geography", "country": "france"}
+  },
+  {
+    "id": "doc4",
+    "content": "Deep learning is a type of machine learning based on artificial neural networks with multiple layers. It has achieved remarkable results in image recognition, natural language processing, and game playing.",
+    "metadata": {"topic": "ai", "subtopic": "deep_learning"}
+  },
+  {
+    "id": "doc5",
+    "content": "JavaScript is a programming language primarily used for web development. It runs in web browsers and enables interactive web pages. Node.js allows JavaScript to run on servers.",
+    "metadata": {"topic": "programming", "language": "javascript"}
+  },
+  {
+    "id": "doc6",
+    "content": "Natural language processing (NLP) is a field of AI focused on enabling computers to understand, interpret, and generate human language. Applications include translation, sentiment analysis, and chatbots.",
+    "metadata": {"topic": "ai", "subtopic": "nlp"}
+  },
+  {
+    "id": "doc7",
+    "content": "London is the capital and largest city of England and the United Kingdom. It is situated on the River Thames and has been a major settlement for two millennia.",
+    "metadata": {"topic": "geography", "country": "uk"}
+  },
+  {
+    "id": "doc8",
+    "content": "Data structures are ways of organizing and storing data in computers so it can be accessed and modified efficiently. Common data structures include arrays, linked lists, stacks, queues, trees, and graphs.",
+    "metadata": {"topic": "computer_science", "subtopic": "data_structures"}
+  }
+]

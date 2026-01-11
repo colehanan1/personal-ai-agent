@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 from dataclasses import dataclass, asdict
@@ -16,6 +17,48 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .edge_packager import BundleManifest, EdgePackager
+
+
+def safe_tar_extract(tar: tarfile.TarFile, path: Path) -> None:
+    """
+    Safely extract tar archive with path traversal protection.
+    
+    Compatible with Python 3.12 and 3.14+.
+    
+    Args:
+        tar: Open TarFile object
+        path: Destination path for extraction
+    """
+    # Python 3.14+ has filter argument
+    if sys.version_info >= (3, 12) and hasattr(tarfile, 'data_filter'):
+        # Use data filter for safe extraction (no symlinks, no special files)
+        tar.extractall(path, filter='data')
+    else:
+        # Manual validation for older Python
+        path = Path(path).resolve()
+        
+        for member in tar.getmembers():
+            # Reject absolute paths
+            if member.name.startswith('/'):
+                raise ValueError(f"Rejected absolute path in tar: {member.name}")
+            
+            # Reject path traversal
+            if '..' in Path(member.name).parts:
+                raise ValueError(f"Rejected path traversal in tar: {member.name}")
+            
+            # Resolve target path and ensure it's within extraction directory
+            target = (path / member.name).resolve()
+            if not str(target).startswith(str(path)):
+                raise ValueError(f"Rejected path outside extraction dir: {member.name}")
+            
+            # Reject symlinks and special files
+            if member.issym() or member.islnk():
+                raise ValueError(f"Rejected symlink in tar: {member.name}")
+            if member.ischr() or member.isblk() or member.isfifo() or member.isdev():
+                raise ValueError(f"Rejected special file in tar: {member.name}")
+        
+        # All members validated, extract
+        tar.extractall(path)
 
 
 @dataclass
@@ -212,7 +255,7 @@ class DeploymentManager:
                 
                 # Extract tarball
                 with tarfile.open(bundle_path, "r:gz") as tar:
-                    tar.extractall(tmpdir_path)
+                    safe_tar_extract(tar, tmpdir_path)
                 
                 # Find extracted bundle directory
                 bundle_dirs = list(tmpdir_path.glob("bundle_*"))
