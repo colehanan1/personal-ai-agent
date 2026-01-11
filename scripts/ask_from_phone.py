@@ -34,6 +34,8 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
 from milton_orchestrator.state_paths import resolve_state_dir
+from milton_orchestrator.input_normalizer import normalize_incoming_input
+from goals.api import add_goal, list_goals
 
 load_dotenv()
 
@@ -97,6 +99,199 @@ def get_action_info(action: str) -> Tuple[str, bool]:
         desc, read_only = ALLOWED_ACTIONS[action]
         return desc, read_only
     return "Unknown action", False
+
+
+# ==============================================================================
+# Goal Capture
+# ==============================================================================
+
+_GOAL_INTENT_PATTERNS = [
+    re.compile(r"^\s*(?:i\s+want\s+to|i\s+need\s+to|i\s+plan\s+to)\s+(?P<goal>.+)$", re.I),
+    re.compile(r"^\s*(?:i\s+should)\s+(?P<goal>.+)$", re.I),
+    re.compile(r"^\s*(?:please\s+)?remember\s+to\s+(?P<goal>.+)$", re.I),
+    re.compile(r"^\s*(?:remind\s+me\s+to)\s+(?P<goal>.+)$", re.I),
+    re.compile(r"^\s*(?:add\s+to\s+goals?|add\s+goal|goal|todo)\s*[:\-]\s*(?P<goal>.+)$", re.I),
+    # NEW: Match "goals" or "goals update" as prefix, extract following lines as goals
+    re.compile(r"^\s*goals?\s*(?:update|add|new|set)?\s*[:\-]?\s*(?P<goal>.+)$", re.I),
+]
+
+
+def _normalize_goal_text(text: str) -> str:
+    """Normalize goal text by removing extra whitespace and punctuation."""
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    cleaned = cleaned.strip(" \"'`")
+    cleaned = re.sub(r"[.!?]+$", "", cleaned).strip()
+    cleaned = re.sub(r"\bmyself\b", "", cleaned, flags=re.I).strip()
+    cleaned = re.sub(r"^to\s+", "", cleaned, flags=re.I).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def _extract_goals_from_text(text: str) -> list[str]:
+    """
+    Extract goal items from text.
+
+    Handles multiple formats:
+    - "goals update X \\n\\n goal1 \\n goal2" -> extract goal1, goal2
+    - Single line goal intent patterns
+    - Multi-line goals separated by newlines
+    """
+    goals: list[str] = []
+    lines = text.strip().split('\n')
+
+    # Check if first line is a "goals" command prefix
+    is_goals_command = False
+    if lines:
+        first_line = lines[0].strip().lower()
+        if first_line.startswith('goals') or first_line.startswith('goal'):
+            is_goals_command = True
+            # Check if the first line is JUST a command (e.g., "goals update milton...")
+            # vs containing actual goal content
+            meta_patterns = [
+                r"^\s*goals?\s*(?:update|add|new|set|for|via|to|from|according|per)\b",
+            ]
+            for pattern in meta_patterns:
+                if re.match(pattern, lines[0], re.I):
+                    # First line is meta, skip it
+                    lines = lines[1:]
+                    break
+
+    # Extract goals from remaining lines
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Skip lines that look like metadata or commands
+        if re.match(r"^(date|time|from|via|update|according)\s*:", stripped, re.I):
+            continue
+
+        # Check against goal intent patterns
+        matched = False
+        for pattern in _GOAL_INTENT_PATTERNS:
+            match = pattern.match(stripped)
+            if match:
+                goal_text = _normalize_goal_text(match.group("goal"))
+                if goal_text and len(goal_text) >= 3:
+                    goals.append(goal_text)
+                    matched = True
+                    break
+
+        # If in goals command context, treat unmatched lines as goals
+        if not matched and is_goals_command:
+            goal_text = _normalize_goal_text(stripped)
+            # Skip if it looks like metadata or just the "goals:" header
+            if goal_text and len(goal_text) >= 3:
+                # Skip bare "goals" or "goals:" header lines
+                if re.match(r"^goals?:?$", goal_text, re.I):
+                    continue
+                if not re.match(r"^(goals?|update|add|new|set)\s*(milton|perplexity|conversation)?$", goal_text, re.I):
+                    goals.append(goal_text)
+
+    return goals
+
+
+def _goal_exists(goal_text: str) -> Optional[str]:
+    """Check if goal already exists, return goal ID if found."""
+    normalized = _normalize_goal_text(goal_text).lower()
+    for scope in ("daily", "weekly", "monthly"):
+        for goal in list_goals(scope, base_dir=STATE_DIR):
+            existing = _normalize_goal_text(str(goal.get("text", ""))).lower()
+            if existing == normalized and goal.get("id"):
+                return str(goal["id"])
+    return None
+
+
+def capture_goals(text: str) -> list[Dict[str, str]]:
+    """
+    Extract and persist goals from text.
+
+    Returns list of captured goals with id, text, and status.
+    """
+    captured: list[Dict[str, str]] = []
+    goals = _extract_goals_from_text(text)
+
+    for goal_text in goals:
+        try:
+            existing_id = _goal_exists(goal_text)
+            if existing_id:
+                captured.append({
+                    "id": existing_id,
+                    "text": goal_text,
+                    "status": "existing"
+                })
+                logger.info(f"Goal already exists: {goal_text} (id={existing_id})")
+            else:
+                goal_id = add_goal(
+                    "daily",
+                    goal_text,
+                    tags=["captured", "phone", "ntfy"],
+                    base_dir=STATE_DIR,
+                )
+                captured.append({
+                    "id": goal_id,
+                    "text": goal_text,
+                    "status": "added"
+                })
+                logger.info(f"Goal captured: {goal_text} (id={goal_id})")
+        except Exception as exc:
+            logger.warning(f"Goal capture failed for '{goal_text}': {exc}")
+
+    return captured
+
+
+def _format_goal_captures(captures: list[Dict[str, str]]) -> str:
+    """Format captured goals for response."""
+    if not captures:
+        return ""
+    lines = []
+    for cap in captures:
+        status = cap.get("status", "unknown")
+        text = cap.get("text", "")
+        goal_id = cap.get("id", "")
+        if status == "existing":
+            lines.append(f"Goal already tracked: {text} (id={goal_id})")
+        else:
+            lines.append(f"Goal captured: {text} (id={goal_id})")
+    return "\n".join(lines)
+
+
+def unwrap_json_envelope(message: str) -> str:
+    """
+    Unwrap JSON envelope from ntfy messages.
+
+    iPhone shortcuts often wrap messages in JSON like:
+    {"Date":"...", "Provided Input":"actual message here"}
+
+    Returns the extracted message text or original if not JSON.
+    """
+    stripped = message.strip()
+    if not stripped.startswith("{"):
+        return message
+
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        return message
+
+    if not isinstance(data, dict):
+        return message
+
+    # Look for common keys containing the actual message
+    for key in ("Provided Input", "providedinput", "input", "message", "text", "prompt", "query"):
+        normalized_keys = {k.lower().replace(" ", "").replace("_", ""): k for k in data.keys()}
+        normalized_key = key.lower().replace(" ", "").replace("_", "")
+        if normalized_key in normalized_keys:
+            actual_key = normalized_keys[normalized_key]
+            value = data.get(actual_key)
+            if value is not None:
+                extracted = str(value).strip()
+                logger.info(f"Unwrapped JSON envelope: extracted '{actual_key}' ({len(extracted)} chars)")
+                return extracted
+
+    # No recognized key found, return original
+    logger.debug("JSON envelope detected but no recognized message key found")
+    return message
 
 
 # ==============================================================================
@@ -373,12 +568,14 @@ def handle_incoming_message(message: str) -> str:
     Handle incoming message with full audit trail.
 
     Process flow:
-    1. Parse message prefix
-    2. Determine action
-    3. Check allowlist
-    4. Execute via NEXUS (single entrypoint)
-    5. Write audit log
-    6. Return response
+    1. Unwrap JSON envelope (if present)
+    2. Capture goals from message
+    3. Parse message prefix
+    4. Determine action
+    5. Check allowlist
+    6. Execute via NEXUS (single entrypoint)
+    7. Write audit log
+    8. Return response
 
     Args:
         message: Raw message from phone
@@ -387,8 +584,24 @@ def handle_incoming_message(message: str) -> str:
         Formatted response to send back
     """
     timestamp = datetime.now(timezone.utc).isoformat()
+    original_message = message
 
-    # Parse message
+    # Step 1: Unwrap JSON envelope (iPhone shortcuts wrap messages in JSON)
+    unwrapped = unwrap_json_envelope(message)
+    if unwrapped != message:
+        logger.info(f"JSON envelope unwrapped: {len(message)} -> {len(unwrapped)} chars")
+        message = unwrapped
+
+    # Step 2: Capture goals from the message (before routing)
+    goal_captures: list[Dict[str, str]] = []
+    try:
+        goal_captures = capture_goals(message)
+        if goal_captures:
+            logger.info(f"Captured {len(goal_captures)} goal(s) from message")
+    except Exception as exc:
+        logger.warning(f"Goal capture failed: {exc}")
+
+    # Step 3: Parse message prefix
     prefix, query = parse_message_prefix(message)
     action = determine_action(prefix, query)
 
@@ -429,12 +642,18 @@ def handle_incoming_message(message: str) -> str:
         result_summary = "Failed"
         error = result.get("error")
 
+    # Append goal capture info if any goals were captured
+    if goal_captures:
+        goal_info = _format_goal_captures(goal_captures)
+        response_text = f"{response_text}\n\n---\n{goal_info}"
+        result_summary = f"{result_summary}; goals_captured={len(goal_captures)}"
+
     # Write audit log
     entry = AuditLogEntry(
         timestamp=timestamp,
         source="phone_listener",
         action=action,
-        message=message,
+        message=original_message,  # Log original message for audit
         parsed_prefix=prefix,
         parsed_query=query,
         allowed=True,

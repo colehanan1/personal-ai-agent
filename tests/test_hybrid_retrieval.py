@@ -3,6 +3,7 @@
 import pytest
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from unittest.mock import Mock, MagicMock, patch
 import tempfile
 import os
 
@@ -14,6 +15,60 @@ from memory.retrieve import (
     _score_item,
 )
 from memory.embeddings import is_available as embeddings_available
+
+
+class MockWeaviateSearchResult:
+    """Mock Weaviate search result object."""
+
+    def __init__(self, uuid: str, distance: float):
+        self.uuid = uuid
+        self.metadata = Mock()
+        self.metadata.distance = distance
+
+
+class MockWeaviateQueryResult:
+    """Mock Weaviate query result."""
+
+    def __init__(self, objects: list):
+        self.objects = objects
+
+
+def create_mock_weaviate_client(items: list, query_text: str = ""):
+    """
+    Create a mock Weaviate client that returns semantic scores for the given items.
+
+    Items closer in meaning to the query get higher scores.
+    """
+    # Create mock search results with item UUIDs and fake distances
+    # Lower distance = higher similarity
+    mock_objects = []
+    for i, item in enumerate(items):
+        # Simple heuristic: items with "AI", "intelligence", "learning" get lower distance
+        content_lower = item.content.lower()
+        query_lower = query_text.lower()
+
+        # Check for semantic overlap
+        ai_terms = {"ai", "artificial", "intelligence", "machine", "learning", "neural", "deep"}
+        item_terms = set(content_lower.split())
+        query_terms = set(query_lower.split())
+
+        ai_overlap = len(item_terms & ai_terms) + len(query_terms & ai_terms & item_terms)
+        if ai_overlap > 0:
+            distance = 0.3 / ai_overlap  # Lower distance for AI-related content
+        else:
+            distance = 0.9  # High distance for unrelated content
+
+        mock_objects.append(MockWeaviateSearchResult(item.id, distance))
+
+    mock_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_query = MagicMock()
+
+    mock_query.near_vector.return_value = MockWeaviateQueryResult(mock_objects)
+    mock_collection.query = mock_query
+    mock_client.collections.get.return_value = mock_collection
+
+    return mock_client
 
 
 class MockBackend:
@@ -244,15 +299,20 @@ class TestHybridRetrieval:
             create_test_item("cooking dinner recipes"),
         ]
         backend = MockBackend(items)
+        query = "AI and machine learning"
 
-        # semantic_weight=1.0 should give pure semantic results
-        results = query_relevant_hybrid(
-            "AI and machine learning",
-            backend=backend,
-            semantic_weight=1.0,
-            mode="hybrid",
-            limit=10,
-        )
+        # Mock Weaviate client for hermetic testing
+        mock_client = create_mock_weaviate_client(items, query)
+
+        with patch("memory.retrieve.get_client", return_value=mock_client):
+            # semantic_weight=1.0 should give pure semantic results
+            results = query_relevant_hybrid(
+                query,
+                backend=backend,
+                semantic_weight=1.0,
+                mode="hybrid",
+                limit=10,
+            )
 
         assert len(results) > 0
 
@@ -265,13 +325,18 @@ class TestHybridRetrieval:
             create_test_item("artificial intelligence research"),
         ]
         backend = MockBackend(items)
+        query = "machine learning AI"
 
-        results = query_relevant_hybrid(
-            "machine learning AI",
-            backend=backend,
-            semantic_weight=0.5,
-            limit=10,
-        )
+        # Mock Weaviate client for hermetic testing
+        mock_client = create_mock_weaviate_client(items, query)
+
+        with patch("memory.retrieve.get_client", return_value=mock_client):
+            results = query_relevant_hybrid(
+                query,
+                backend=backend,
+                semantic_weight=0.5,
+                limit=10,
+            )
 
         assert len(results) > 0
         # Should return relevant items (ML/AI related)
@@ -346,36 +411,48 @@ class TestHybridRetrievalModes:
 
     @pytest.mark.skipif(not embeddings_available(), reason="Embeddings not available")
     def test_mode_semantic(self):
-        """Test pure semantic mode."""
+        """Test pure semantic mode with mocked Weaviate client."""
         items = [
             create_test_item("artificial intelligence"),
             create_test_item("cooking recipes"),
         ]
         backend = MockBackend(items)
+        query = "AI machine learning"
 
-        results = query_relevant_hybrid(
-            "AI machine learning",
-            backend=backend,
-            mode="semantic",
-        )
+        # Mock Weaviate client to return scores for our MockBackend items
+        mock_client = create_mock_weaviate_client(items, query)
+
+        with patch("memory.retrieve.get_client", return_value=mock_client):
+            results = query_relevant_hybrid(
+                query,
+                backend=backend,
+                mode="semantic",
+            )
 
         # Should return results based on semantic similarity only
         assert len(results) > 0
+        # AI-related item should rank higher than cooking
+        assert "intelligence" in results[0].content.lower()
 
     @pytest.mark.skipif(not embeddings_available(), reason="Embeddings not available")
     def test_mode_hybrid_default(self):
-        """Test hybrid mode (default)."""
+        """Test hybrid mode (default) with mocked Weaviate client."""
         items = [
             create_test_item("machine learning"),
             create_test_item("cooking"),
         ]
         backend = MockBackend(items)
+        query = "machine learning"
 
-        results = query_relevant_hybrid(
-            "machine learning",
-            backend=backend,
-            mode="hybrid",
-        )
+        # Mock Weaviate client to return scores for our MockBackend items
+        mock_client = create_mock_weaviate_client(items, query)
+
+        with patch("memory.retrieve.get_client", return_value=mock_client):
+            results = query_relevant_hybrid(
+                query,
+                backend=backend,
+                mode="hybrid",
+            )
 
         assert len(results) > 0
 
