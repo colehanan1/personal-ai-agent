@@ -1,8 +1,10 @@
 """
-Model Evolution Module
+Model Evolution Module - REAL IMPLEMENTATION
 
-Handles distillation of LoRA adapters into optimized smaller models.
-Supports knowledge distillation with pruning for edge deployment.
+Handles REAL distillation of LoRA adapters into optimized models.
+No placeholders, no fake metrics, no stubs.
+
+Strategy: PEFT merge_and_unload to create standalone models.
 """
 from __future__ import annotations
 
@@ -10,7 +12,7 @@ import json
 import logging
 import os
 import shutil
-import torch
+import time
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,22 +22,17 @@ from milton_orchestrator.state_paths import resolve_state_dir
 
 logger = logging.getLogger(__name__)
 
+# Base model path - MANDATORY
+BASE_MODEL_PATH = Path.home() / "milton" / "models" / "Llama-3.1-8B-Instruct-HF"
+
 
 @dataclass
 class DistillationConfig:
     """Configuration for model distillation."""
     teacher_model_path: str
     adapter_path: Optional[str] = None
-    student_model_size: str = "3B"  # Target size
-    temperature: float = 2.0
-    alpha: float = 0.5  # Weight between distillation and hard label loss
-    num_epochs: int = 3
-    learning_rate: float = 2e-5
-    batch_size: int = 4
-    max_seq_length: int = 2048
-    prune_magnitude_threshold: float = 0.01
-    prune_entropy_threshold: float = 0.1
-    use_pruning: bool = False
+    prune_magnitude_threshold: float = 0.0  # Disabled by default
+    copy_base_model: bool = True
     
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -47,14 +44,14 @@ class DistillationConfig:
 
 @dataclass
 class DistillationMetrics:
-    """Metrics from distillation process."""
-    distillation_loss: float
-    perplexity: float
-    semantic_alignment_score: float
-    compression_ratio: float
-    pruned_parameters: int
-    total_parameters: int
+    """REAL metrics from distillation process - NO FAKES."""
+    method: str  # "peft_merge" or "copy_only"
+    model_size_mb: float
+    parameter_count: int
+    has_adapter: bool
+    adapter_merged: bool
     training_time_seconds: float
+    base_model_path: str
     
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -62,23 +59,23 @@ class DistillationMetrics:
 
 class ModelEvolution:
     """
-    Orchestrates model evolution through distillation and pruning.
+    REAL model evolution through PEFT adapter merging.
     
-    Takes a base model + LoRA adapter and creates a smaller, optimized
-    standalone model suitable for edge deployment.
+    Strategy:
+    1. Verify base model exists at canonical path
+    2. Load base model + LoRA adapter using PEFT
+    3. Merge adapter weights into base using merge_and_unload()
+    4. Save merged model as standalone HF model
+    5. Compute REAL metrics (size, param count)
     
-    Process:
-    1. Load teacher (base + adapter)
-    2. Initialize student (smaller architecture)
-    3. Distill knowledge using temperature-scaled softmax
-    4. Optional: Prune low-magnitude/low-entropy weights
-    5. Evaluate semantic alignment
+    NO PLACEHOLDERS. NO FAKE METRICS.
     """
     
     def __init__(
         self,
         models_dir: Optional[Path] = None,
         adapters_dir: Optional[Path] = None,
+        base_model_path: Optional[Path] = None,
     ):
         """
         Initialize model evolution orchestrator.
@@ -86,12 +83,53 @@ class ModelEvolution:
         Args:
             models_dir: Directory for distilled models
             adapters_dir: Directory containing LoRA adapters
+            base_model_path: Path to base model (overrides default)
         """
-        self.models_dir = models_dir or Path(resolve_state_dir()) / "models" / "distilled"
-        self.adapters_dir = adapters_dir or Path(resolve_state_dir()) / "adapters"
+        self.models_dir = models_dir or (resolve_state_dir() / "models" / "distilled")
+        self.adapters_dir = adapters_dir or (resolve_state_dir() / "adapters")
+        self.base_model_path = base_model_path or BASE_MODEL_PATH
+        
         self.models_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"ModelEvolution initialized: models_dir={self.models_dir}")
+        # Verify base model exists
+        if not self.base_model_path.exists():
+            raise FileNotFoundError(
+                f"Base model not found at: {self.base_model_path}\n"
+                f"Cannot proceed with distillation."
+            )
+        
+        logger.info(f"ModelEvolution initialized:")
+        logger.info(f"  Base model: {self.base_model_path}")
+        logger.info(f"  Output dir: {self.models_dir}")
+    
+    def _verify_dependencies(self) -> None:
+        """Verify required packages are installed."""
+        try:
+            import torch
+            import transformers
+            from peft import PeftModel
+        except ImportError as e:
+            raise RuntimeError(
+                f"Missing required package: {e}\n"
+                f"Install with: pip install torch transformers peft"
+            ) from e
+    
+    def _count_parameters(self, model) -> int:
+        """Count total parameters in model."""
+        try:
+            return sum(p.numel() for p in model.parameters())
+        except Exception as e:
+            logger.warning(f"Could not count parameters: {e}")
+            return 0
+    
+    def _get_model_size_mb(self, model_path: Path) -> float:
+        """Calculate total size of model files in MB."""
+        total_size = 0
+        if model_path.is_dir():
+            for item in model_path.rglob("*"):
+                if item.is_file():
+                    total_size += item.stat().st_size
+        return total_size / (1024 * 1024)
     
     def distill_model(
         self,
@@ -102,188 +140,161 @@ class ModelEvolution:
         dry_run: bool = False,
     ) -> Tuple[Path, DistillationMetrics]:
         """
-        Distill adapter knowledge into a smaller model.
+        REAL distillation: merge LoRA adapter into base model.
+        
+        If adapter_path is None, just copies the base model.
+        If adapter_path is provided, loads and merges using PEFT.
         
         Args:
-            base_model_path: Path to base model
+            base_model_path: Path to base model (usually BASE_MODEL_PATH)
             adapter_path: Path to LoRA adapter (optional)
-            output_path: Where to save distilled model
+            output_path: Where to save merged model
             config: Distillation configuration
-            dry_run: If True, skip actual training
+            dry_run: If True, verify setup but don't run
         
         Returns:
-            Tuple of (distilled_model_path, metrics)
+            Tuple of (output_path, real_metrics)
+        
+        Raises:
+            FileNotFoundError: If base model or adapter missing
+            RuntimeError: If dependencies missing
         """
         if config is None:
             config = DistillationConfig(teacher_model_path=base_model_path)
         
-        logger.info(f"Starting distillation: base={base_model_path}, adapter={adapter_path}")
-        logger.info(f"Target output: {output_path}")
+        start_time = time.time()
+        
+        logger.info("=" * 60)
+        logger.info("REAL MODEL DISTILLATION (PEFT merge)")
+        logger.info("=" * 60)
+        logger.info(f"Base model: {base_model_path}")
+        logger.info(f"Adapter: {adapter_path or 'None (base only)'}")
+        logger.info(f"Output: {output_path}")
+        
+        # Verify base model exists
+        base_path = Path(base_model_path)
+        if not base_path.exists():
+            raise FileNotFoundError(f"Base model not found: {base_path}")
+        
+        # Verify adapter exists if provided
+        has_adapter = False
+        if adapter_path:
+            adapter_p = Path(adapter_path)
+            if not adapter_p.exists():
+                raise FileNotFoundError(f"Adapter not found: {adapter_p}")
+            has_adapter = True
         
         if dry_run:
-            logger.info("DRY RUN: Skipping actual distillation")
-            # Return dummy metrics for dry run
-            metrics = DistillationMetrics(
-                distillation_loss=0.85,
-                perplexity=12.3,
-                semantic_alignment_score=0.92,
-                compression_ratio=2.67,
-                pruned_parameters=0,
-                total_parameters=3_000_000_000,
-                training_time_seconds=0.0,
-            )
+            logger.info("DRY RUN: Would merge model but skipping actual compute")
             output_path.mkdir(parents=True, exist_ok=True)
-            (output_path / "config.json").write_text(json.dumps(config.to_dict(), indent=2))
+            
+            # Create config file to show intent
+            (output_path / "distillation_config.json").write_text(
+                json.dumps(config.to_dict(), indent=2)
+            )
+            
+            # NO FAKE METRICS in dry run - return minimal real data
+            metrics = DistillationMetrics(
+                method="dry_run",
+                model_size_mb=0.0,
+                parameter_count=0,
+                has_adapter=has_adapter,
+                adapter_merged=False,
+                training_time_seconds=time.time() - start_time,
+                base_model_path=str(base_path),
+            )
             return output_path, metrics
         
-        # Real implementation would:
-        # 1. Load teacher model (base + adapter)
-        # 2. Load/initialize student model
-        # 3. Prepare distillation dataset
-        # 4. Run distillation training loop
-        # 5. Calculate metrics
-        # 6. Save distilled model
+        # REAL IMPLEMENTATION
+        self._verify_dependencies()
         
         try:
-            import time
-            start_time = time.time()
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from peft import PeftModel
             
-            # Placeholder: In real implementation, use transformers + PEFT
-            logger.info("Loading teacher model...")
-            # teacher = AutoModelForCausalLM.from_pretrained(base_model_path)
-            # if adapter_path:
-            #     teacher = PeftModel.from_pretrained(teacher, adapter_path)
+            logger.info("Loading base model...")
+            model = AutoModelForCausalLM.from_pretrained(
+                base_model_path,
+                torch_dtype=torch.float16,
+                device_map="auto",
+                low_cpu_mem_usage=True,
+            )
             
-            logger.info("Initializing student model...")
-            # student = AutoModelForCausalLM.from_pretrained(student_config)
+            tokenizer = AutoTokenizer.from_pretrained(base_model_path)
             
-            logger.info("Running distillation training...")
-            # for epoch in range(config.num_epochs):
-            #     distill_loss = run_distillation_epoch(teacher, student, ...)
+            merged_model = model
+            adapter_merged = False
             
+            if adapter_path:
+                logger.info(f"Loading LoRA adapter from: {adapter_path}")
+                model = PeftModel.from_pretrained(model, adapter_path)
+                
+                logger.info("Merging adapter weights into base model...")
+                merged_model = model.merge_and_unload()
+                adapter_merged = True
+                logger.info("✓ Adapter merged successfully")
+            else:
+                logger.info("No adapter provided, using base model as-is")
+            
+            # Count parameters
+            param_count = self._count_parameters(merged_model)
+            logger.info(f"Model has {param_count:,} parameters")
+            
+            # Save merged model
+            logger.info(f"Saving merged model to: {output_path}")
             output_path.mkdir(parents=True, exist_ok=True)
             
-            # Save configuration
-            config_path = output_path / "config.json"
-            config_path.write_text(json.dumps(config.to_dict(), indent=2))
+            merged_model.save_pretrained(output_path)
+            tokenizer.save_pretrained(output_path)
+            
+            logger.info("✓ Model saved successfully")
+            
+            # Calculate real size
+            model_size_mb = self._get_model_size_mb(output_path)
+            logger.info(f"Output size: {model_size_mb:.1f} MB")
+            
+            # Save config
+            (output_path / "distillation_config.json").write_text(
+                json.dumps(config.to_dict(), indent=2)
+            )
             
             elapsed = time.time() - start_time
             
-            # Calculate metrics (placeholder values)
+            # Create REAL metrics
             metrics = DistillationMetrics(
-                distillation_loss=0.85,
-                perplexity=12.3,
-                semantic_alignment_score=0.92,
-                compression_ratio=2.67,
-                pruned_parameters=0,
-                total_parameters=3_000_000_000,
+                method="peft_merge" if adapter_merged else "copy_base",
+                model_size_mb=model_size_mb,
+                parameter_count=param_count,
+                has_adapter=has_adapter,
+                adapter_merged=adapter_merged,
                 training_time_seconds=elapsed,
+                base_model_path=str(base_path),
             )
             
             # Save metrics
-            metrics_path = output_path / "metrics.json"
-            metrics_path.write_text(json.dumps(metrics.to_dict(), indent=2))
+            (output_path / "metrics.json").write_text(
+                json.dumps(metrics.to_dict(), indent=2)
+            )
             
-            logger.info(f"Distillation complete: {output_path}")
-            logger.info(f"Metrics: perplexity={metrics.perplexity:.2f}, "
-                       f"alignment={metrics.semantic_alignment_score:.3f}")
+            logger.info("=" * 60)
+            logger.info("DISTILLATION COMPLETE")
+            logger.info(f"Method: {metrics.method}")
+            logger.info(f"Parameters: {metrics.parameter_count:,}")
+            logger.info(f"Size: {metrics.model_size_mb:.1f} MB")
+            logger.info(f"Time: {metrics.training_time_seconds:.1f}s")
+            logger.info("=" * 60)
             
             return output_path, metrics
             
         except Exception as e:
             logger.error(f"Distillation failed: {e}", exc_info=True)
-            raise
+            raise RuntimeError(f"Model distillation failed: {e}") from e
     
-    def evaluate_distillation(
-        self,
-        distilled_model_path: Path,
-        base_model_path: str,
-        test_prompts: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Evaluate distilled model against base model.
-        
-        Args:
-            distilled_model_path: Path to distilled model
-            base_model_path: Path to base model for comparison
-            test_prompts: Optional test prompts
-        
-        Returns:
-            Dictionary of evaluation metrics
-        """
-        logger.info(f"Evaluating distilled model: {distilled_model_path}")
-        
-        if test_prompts is None:
-            test_prompts = [
-                "Summarize the key points of our last conversation.",
-                "What are my current research priorities?",
-                "Help me draft an email to my advisor.",
-            ]
-        
-        # Placeholder evaluation
-        # Real implementation would:
-        # 1. Load both models
-        # 2. Run inference on test set
-        # 3. Compare outputs (BLEU, ROUGE, semantic similarity)
-        # 4. Measure latency and memory
-        
-        evaluation_results = {
-            "semantic_similarity": 0.92,
-            "bleu_score": 0.88,
-            "rouge_l": 0.90,
-            "latency_improvement": 2.3,  # x faster
-            "memory_reduction": 0.63,  # 63% smaller
-            "quality_retained": 0.94,
-        }
-        
-        logger.info(f"Evaluation complete: quality_retained={evaluation_results['quality_retained']:.2%}")
-        
-        return evaluation_results
-    
-    def prune_low_impact_weights(
-        self,
-        model_path: Path,
-        magnitude_threshold: float = 0.01,
-        entropy_threshold: float = 0.1,
-    ) -> Tuple[Path, int]:
-        """
-        Prune low-impact weights from distilled model.
-        
-        Args:
-            model_path: Path to model to prune
-            magnitude_threshold: Minimum weight magnitude to keep
-            entropy_threshold: Minimum entropy to keep
-        
-        Returns:
-            Tuple of (pruned_model_path, num_pruned_parameters)
-        """
-        logger.info(f"Pruning model: {model_path}")
-        logger.info(f"Thresholds: magnitude={magnitude_threshold}, entropy={entropy_threshold}")
-        
-        # Placeholder: Real implementation would use torch pruning
-        # 1. Load model weights
-        # 2. Calculate magnitude and entropy for each weight
-        # 3. Zero out weights below thresholds
-        # 4. Optionally convert to sparse format
-        # 5. Save pruned model
-        
-        pruned_path = model_path.parent / f"{model_path.name}_pruned"
-        pruned_path.mkdir(parents=True, exist_ok=True)
-        
-        # Copy model files
-        for item in model_path.glob("*"):
-            if item.is_file():
-                shutil.copy2(item, pruned_path / item.name)
-        
-        num_pruned = 150_000_000  # Placeholder
-        
-        logger.info(f"Pruned {num_pruned:,} parameters")
-        
-        return pruned_path, num_pruned
     
     def get_model_info(self, model_path: Path) -> Dict[str, Any]:
         """
-        Get information about a distilled model.
+        Get REAL information about a distilled model.
         
         Args:
             model_path: Path to model
@@ -291,7 +302,7 @@ class ModelEvolution:
         Returns:
             Dictionary with model metadata
         """
-        config_path = model_path / "config.json"
+        config_path = model_path / "distillation_config.json"
         metrics_path = model_path / "metrics.json"
         
         info = {
@@ -304,5 +315,19 @@ class ModelEvolution:
         
         if metrics_path.exists():
             info["metrics"] = json.loads(metrics_path.read_text())
+        
+        # Check for actual model files
+        has_model = False
+        model_files = []
+        if model_path.is_dir():
+            for ext in [".safetensors", ".bin", ".pt"]:
+                files = list(model_path.glob(f"*{ext}"))
+                if files:
+                    has_model = True
+                    model_files.extend([str(f.name) for f in files])
+        
+        info["has_model_files"] = has_model
+        info["model_files"] = model_files
+        info["size_mb"] = self._get_model_size_mb(model_path) if model_path.exists() else 0.0
         
         return info

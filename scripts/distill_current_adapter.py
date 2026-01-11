@@ -10,6 +10,13 @@ import logging
 import sys
 from pathlib import Path
 
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -37,17 +44,12 @@ def main():
     )
     parser.add_argument(
         "--base-model",
-        default="meta-llama/Llama-3.1-8B-Instruct",
+        default=str(Path.home() / "milton" / "models" / "Llama-3.1-8B-Instruct-HF"),
         help="Base model path",
     )
     parser.add_argument(
         "--output-name",
         help="Output model name (default: auto-generated)",
-    )
-    parser.add_argument(
-        "--student-size",
-        default="3B",
-        help="Target student model size (e.g., 3B, 7B)",
     )
     parser.add_argument(
         "--use-pruning",
@@ -100,8 +102,7 @@ def main():
         config = DistillationConfig(
             teacher_model_path=args.base_model,
             adapter_path=adapter_info.adapter_path,
-            student_model_size=args.student_size,
-            use_pruning=args.use_pruning,
+            prune_magnitude_threshold=0.01 if args.use_pruning else 0.0,
         )
         
         # Generate output name
@@ -123,10 +124,10 @@ def main():
         print("Distillation Complete")
         print("=" * 60)
         print(f"Output: {distilled_path}")
-        print(f"Perplexity: {metrics.perplexity:.2f}")
-        print(f"Semantic Alignment: {metrics.semantic_alignment_score:.3f}")
-        print(f"Compression Ratio: {metrics.compression_ratio:.2f}x")
-        print(f"Training Time: {metrics.training_time_seconds:.1f}s")
+        print(f"Method: {metrics.method}")
+        print(f"Parameters: {metrics.parameter_count:,}")
+        print(f"Size: {metrics.model_size_mb:.1f} MB")
+        print(f"Time: {metrics.training_time_seconds:.1f}s")
         
         # Output JSON metrics for automation
         metrics_output = {

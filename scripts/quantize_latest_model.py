@@ -10,6 +10,13 @@ import logging
 import sys
 from pathlib import Path
 
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -133,12 +140,13 @@ def main():
         print(f"Original Size: {metrics.original_size_mb:.0f} MB")
         print(f"Compressed Size: {metrics.compressed_size_mb:.0f} MB")
         print(f"Compression Ratio: {metrics.compression_ratio:.2f}x")
-        print(f"Memory Reduction: {metrics.memory_reduction:.1%}")
-        print(f"Inference Speedup: {metrics.inference_speedup:.2f}x")
+        print(f"Quantization: {metrics.quantization_type} ({metrics.quantization_bits}-bit)")
+        print(f"Validation: {'PASSED' if metrics.validation_passed else 'FAILED'}")
+        print(f"GGUF File: {metrics.gguf_file_path or 'None'}")
         
         if validation_results:
             print(f"\nValidation: {'PASSED' if validation_results['validation_passed'] else 'FAILED'}")
-            print(f"Output Similarity: {validation_results['output_similarity']:.2%}")
+            print(f"GGUF Files: {validation_results['gguf_count']}")
         
         # Output JSON metrics for automation
         metrics_output = {
