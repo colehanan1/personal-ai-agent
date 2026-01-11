@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import logging
 
 from agents.memory_hooks import (
+    MemoryContextHook,
     build_memory_context,
     record_memory,
     should_store_responses,
@@ -67,8 +68,15 @@ class CORTEX:
             or os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
         )
         self.system_prompt = self._load_system_prompt()
+        
+        # Initialize memory context hook with semantic search
+        self.memory_hook = MemoryContextHook(
+            agent="CORTEX",
+            use_semantic=True,
+            semantic_weight=0.6,  # Slight bias toward semantic for execution context
+        )
 
-        logger.info("CORTEX agent initialized")
+        logger.info("CORTEX agent initialized with semantic memory context")
 
     def _load_system_prompt(self) -> str:
         """Load CORTEX system prompt from Prompts folder."""
@@ -102,7 +110,8 @@ class CORTEX:
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
 
-        memory_context = build_memory_context("CORTEX", prompt)
+        # Use new MemoryContextHook with semantic search
+        memory_context = self.memory_hook.build_context(prompt, agent="CORTEX")
         if memory_context:
             messages.append({"role": "system", "content": memory_context})
 
