@@ -583,10 +583,11 @@ class Orchestrator:
             or os.getenv("OLLAMA_API_KEY")
         )
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        max_tokens = int(os.getenv("MILTON_CHAT_MAX_TOKENS", "4000"))
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": content}],
-            "max_tokens": 500,
+            "max_tokens": max_tokens,
             "temperature": 0.7,
         }
         response = requests.post(
@@ -595,7 +596,13 @@ class Orchestrator:
             headers=headers,
             timeout=120,
         )
-        response.raise_for_status()
+        
+        # Check response status and raise with body on error
+        if not response.ok:
+            raise RuntimeError(
+                f"LLM API error: {response.status_code} {response.reason} - {response.text}"
+            )
+        
         data = response.json()
         return data["choices"][0]["message"]["content"].strip()
 
