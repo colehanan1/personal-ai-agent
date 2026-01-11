@@ -110,4 +110,4 @@ systemctl --user restart milton-autobench@$USER.timer
 3. Review deployment history
 4. Configure custom selection weights if needed
 
-Full documentation: `deployment/README.md` and `PHASE4_COMPLETE.md`
+Full documentation: `deployment/README.md` and `docs/PHASE4_COMPLETE.md`
