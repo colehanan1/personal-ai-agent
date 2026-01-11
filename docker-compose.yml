@@ -3,9 +3,8 @@ services:
   weaviate:
     image: semitechnologies/weaviate:latest
     ports:
-      # Bind to localhost only for security (override with WEAVIATE_BIND_HOST)
-      - "${WEAVIATE_BIND_HOST:-127.0.0.1}:8080:8080"
-      - "${WEAVIATE_BIND_HOST:-127.0.0.1}:50051:50051"
+      - "8080:8080"
+      - "50051:50051"
     environment:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_APIKEY_ENABLED: 'false'
