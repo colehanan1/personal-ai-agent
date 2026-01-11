@@ -477,10 +477,13 @@ class ContinuousTrainer:
             
             logger.info(f"\n[1/3] Distilling adapter: {adapter_name}")
             
+            # Use REAL base model path
+            base_model_path = str(Path.home() / "milton" / "models" / "Llama-3.1-8B-Instruct-HF")
+            
             # Distill model
             distilled_path = model_evolution.models_dir / f"distilled_{version}"
             distilled_path, distill_metrics = model_evolution.distill_model(
-                base_model_path=self.config.base_model_path,
+                base_model_path=base_model_path,
                 adapter_path=str(adapter_path),
                 output_path=distilled_path,
                 dry_run=dry_run,
@@ -531,7 +534,7 @@ class ContinuousTrainer:
             # Register in model registry
             model_registry.register_model(
                 version=version,
-                base_model=self.config.base_model_path,
+                base_model=base_model_path,
                 model_path=quantized_path,
                 metrics=combined_metrics,
                 distilled_from=adapter_name,

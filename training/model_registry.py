@@ -406,3 +406,73 @@ class ModelRegistry:
             stats["base_model_breakdown"][base] = stats["base_model_breakdown"].get(base, 0) + 1
         
         return stats
+
+
+# Module-level convenience functions using singleton registry
+_default_registry: Optional[ModelRegistry] = None
+
+
+def _get_default_registry() -> ModelRegistry:
+    """Get or create default registry instance."""
+    global _default_registry
+    if _default_registry is None:
+        _default_registry = ModelRegistry()
+    return _default_registry
+
+
+def register_model(
+    version: str,
+    base_model: str,
+    model_path: Path,
+    metrics: Dict[str, Any],
+    distilled_from: Optional[str] = None,
+    quantization: Optional[str] = None,
+    commit_hash: Optional[str] = None,
+    set_active: bool = False,
+) -> ModelRegistryEntry:
+    """
+    Module-level function to register a model.
+    
+    Uses singleton registry instance.
+    """
+    registry = _get_default_registry()
+    return registry.register_model(
+        version=version,
+        base_model=base_model,
+        model_path=model_path,
+        metrics=metrics,
+        distilled_from=distilled_from,
+        quantization=quantization,
+        commit_hash=commit_hash,
+        set_active=set_active,
+    )
+
+
+def get_latest(quantization: Optional[str] = None) -> Optional[ModelRegistryEntry]:
+    """
+    Module-level function to get latest model.
+    
+    Uses singleton registry instance.
+    """
+    registry = _get_default_registry()
+    return registry.get_latest(quantization=quantization)
+
+
+def rollback_model() -> Optional[ModelRegistryEntry]:
+    """
+    Module-level function to rollback to last good model.
+    
+    Uses singleton registry instance.
+    """
+    registry = _get_default_registry()
+    return registry.rollback_model()
+
+
+def get_active() -> Optional[ModelRegistryEntry]:
+    """
+    Module-level function to get active model.
+    
+    Uses singleton registry instance.
+    """
+    registry = _get_default_registry()
+    return registry.get_active()
