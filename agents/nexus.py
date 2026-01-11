@@ -165,6 +165,7 @@ class NEXUS:
         self,
         model_url: Optional[str] = None,
         model_name: Optional[str] = None,
+        adapter_name: Optional[str] = None,
     ):
         """
         Initialize NEXUS agent.
@@ -172,6 +173,7 @@ class NEXUS:
         Args:
             model_url: vLLM API URL (defaults to env var)
             model_name: Model name (defaults to env var)
+            adapter_name: LoRA adapter name to load (optional)
         """
         self.model_url = (
             model_url
@@ -210,6 +212,13 @@ class NEXUS:
             semantic_weight=0.5,  # Balanced hybrid for orchestration
             recency_bias=0.7,  # Higher recency bias for briefings
         )
+        
+        # Load LoRA adapter if specified
+        self.adapter_info = None
+        if adapter_name:
+            self._load_adapter(adapter_name)
+        elif os.getenv("NEXUS_ADAPTER"):
+            self._load_adapter(os.getenv("NEXUS_ADAPTER"))
 
         # Initialize prompting pipeline if available
         self._prompting_pipeline: Optional["PromptingPipeline"] = None
@@ -224,6 +233,34 @@ class NEXUS:
                 logger.warning(f"Failed to initialize prompting pipeline: {e}")
 
         logger.info("NEXUS agent initialized with semantic memory context")
+
+    def _load_adapter(self, adapter_name: str) -> None:
+        """
+        Load LoRA adapter information.
+        
+        Note: Actual adapter loading would happen at the LLM server level.
+        This method loads adapter metadata for provenance tracking.
+        
+        Args:
+            adapter_name: Name of adapter to load
+        """
+        try:
+            from training.adapter_manager import AdapterManager
+            
+            manager = AdapterManager()
+            adapter = manager.get_adapter(adapter_name)
+            
+            if adapter:
+                self.adapter_info = adapter
+                logger.info(
+                    f"Loaded adapter metadata: {adapter_name} "
+                    f"(quality={adapter.quality_score:.2%})"
+                )
+            else:
+                logger.warning(f"Adapter not found: {adapter_name}")
+                
+        except Exception as e:
+            logger.warning(f"Failed to load adapter metadata: {e}")
 
     def _load_system_prompt(self) -> str:
         """Load NEXUS system prompt from Prompts folder with PhD context."""

@@ -266,6 +266,71 @@ class JobManager:
         return None
 
 
+# Registered job functions
+
+def train_lora_weekly():
+    """
+    Weekly LoRA training job.
+    
+    Collects recent conversations, trains a new adapter, evaluates it,
+    and activates if quality is good. Runs rollback if quality degrades.
+    """
+    import logging
+    from training.continuous_trainer import train_lora_adapter
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info("Starting weekly LoRA training job...")
+        
+        # Run training pipeline
+        summary = train_lora_adapter(dry_run=False)
+        
+        logger.info(
+            f"LoRA training complete: {summary['adapter_name']} "
+            f"(quality={summary['evaluation']['quality_score']:.2%})"
+        )
+        
+        if summary.get("quality_check_passed"):
+            logger.info("Quality check passed - new adapter activated")
+        else:
+            logger.warning("Quality check failed - rolled back to previous adapter")
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Weekly LoRA training failed: {e}", exc_info=True)
+        raise
+
+
+def register_weekly_lora_job(manager: Optional[JobManager] = None) -> str:
+    """
+    Register the weekly LoRA training job.
+    
+    Schedules training to run every Sunday at 2:00 AM.
+    
+    Args:
+        manager: JobManager instance (uses global if None)
+        
+    Returns:
+        Job ID
+    """
+    if manager is None:
+        manager = get_job_manager()
+    
+    # Schedule for Sunday at 2:00 AM
+    job_id = manager.add_recurring_job(
+        job_id="train_lora_weekly",
+        task_func=train_lora_weekly,
+        trigger_type="cron",
+        day_of_week="sun",
+        hour=2,
+        minute=0,
+    )
+    
+    return job_id
+
+
 # Convenience function for global job manager
 _global_manager: Optional[JobManager] = None
 
