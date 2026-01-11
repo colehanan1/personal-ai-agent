@@ -12,7 +12,13 @@ def main():
     # Phase 2: Use Llama-3.1-8B-Instruct (located in milton/models/)
     model_path = os.path.expanduser("~/milton/models/Llama-3.1-8B-Instruct-HF")
 
-    api_key = os.getenv("VLLM_API_KEY") or os.getenv("LLM_API_KEY") or "dy537t7K6iEcE3Xr8O0N-6hStQ5veeGcRclhixvWvEo"
+    # API key is optional but recommended for production
+    api_key = os.getenv("VLLM_API_KEY") or os.getenv("LLM_API_KEY")
+    if not api_key:
+        print("⚠️  WARNING: No VLLM_API_KEY or LLM_API_KEY set.")
+        print("⚠️  vLLM server will run WITHOUT authentication (development only).")
+        print("⚠️  For production, set VLLM_API_KEY environment variable.")
+        print()
 
     cmd = [
         sys.executable, "-m", "vllm.entrypoints.openai.api_server",

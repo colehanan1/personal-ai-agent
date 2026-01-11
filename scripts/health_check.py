@@ -5,6 +5,7 @@ Checks vLLM, Weaviate, and agent status
 Outputs JSON status report
 """
 import json
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -18,7 +19,12 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 def check_vllm():
     """Check if vLLM inference server is running"""
     try:
-        headers = {"Authorization": "Bearer dy537t7K6iEcE3Xr8O0N-6hStQ5veeGcRclhixvWvEo"}
+        # Use API key if available (vLLM may or may not require auth)
+        api_key = os.getenv("VLLM_API_KEY") or os.getenv("LLM_API_KEY")
+        headers = {}
+        if api_key:
+            headers = {"Authorization": f"Bearer {api_key}"}
+        
         r = requests.get("http://localhost:8000/v1/models", headers=headers, timeout=2)
         if r.status_code == 200:
             data = r.json()

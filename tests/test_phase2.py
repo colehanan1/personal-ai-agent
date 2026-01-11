@@ -18,7 +18,13 @@ def test_vllm():
     """Test 1: vLLM inference server"""
     print("\n[TEST 1] Testing vLLM inference server...")
     try:
-        headers = {"Authorization": "Bearer dy537t7K6iEcE3Xr8O0N-6hStQ5veeGcRclhixvWvEo"}
+        # Use API key from environment (vLLM may or may not require auth)
+        import os
+        api_key = os.getenv("VLLM_API_KEY") or os.getenv("LLM_API_KEY")
+        headers = {}
+        if api_key:
+            headers = {"Authorization": f"Bearer {api_key}"}
+        
         r = requests.get("http://localhost:8000/v1/models", headers=headers, timeout=5)
         assert r.status_code == 200, f"vLLM returned {r.status_code}"
 
