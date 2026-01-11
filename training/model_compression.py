@@ -93,6 +93,28 @@ class ModelCompression:
         logger.info(f"  Output dir: {self.quantized_dir}")
         logger.info(f"  llama.cpp: {self.llama_cpp_dir or 'NOT SET'}")
     
+    def _find_quantize_binary(self) -> Optional[Path]:
+        """Find quantize binary in llama.cpp directory."""
+        if not self.llama_cpp_dir or not self.llama_cpp_dir.exists():
+            return None
+        
+        # Search in order of preference (modern CMake build locations first)
+        candidates = [
+            "build/bin/llama-quantize",
+            "build/bin/quantize",
+            "build/llama-quantize",
+            "build/quantize",
+            "llama-quantize",  # Legacy Make build
+            "quantize",        # Alternative legacy name
+        ]
+        
+        for candidate in candidates:
+            path = self.llama_cpp_dir / candidate
+            if path.exists() and os.access(path, os.X_OK):
+                return path
+        
+        return None
+    
     def _check_llama_cpp(self) -> bool:
         """Check if llama.cpp tools are available."""
         if not self.llama_cpp_dir:
@@ -103,13 +125,17 @@ class ModelCompression:
         
         # Check for required scripts
         convert_script = self.llama_cpp_dir / "convert_hf_to_gguf.py"
-        quantize_bin = self.llama_cpp_dir / "llama-quantize"
+        quantize_bin = self._find_quantize_binary()
         
         has_convert = convert_script.exists()
-        has_quantize = quantize_bin.exists() and os.access(quantize_bin, os.X_OK)
+        has_quantize = quantize_bin is not None
         
         logger.info(f"  convert_hf_to_gguf.py: {'✓' if has_convert else '✗'}")
-        logger.info(f"  llama-quantize: {'✓' if has_quantize else '✗'}")
+        if has_quantize:
+            rel_path = quantize_bin.relative_to(self.llama_cpp_dir)
+            logger.info(f"  quantize binary: ✓ ({rel_path})")
+        else:
+            logger.info(f"  quantize binary: ✗")
         
         return has_convert and has_quantize
     
@@ -200,15 +226,34 @@ class ModelCompression:
         
         # Check for llama.cpp
         if not self._check_llama_cpp():
-            raise RuntimeError(
-                "llama.cpp tools not found!\n"
-                f"Set LLAMA_CPP_DIR environment variable or pass llama_cpp_dir parameter.\n"
-                f"Current: {self.llama_cpp_dir}\n"
-                "Clone llama.cpp and build:\n"
-                "  git clone https://github.com/ggerganov/llama.cpp\n"
-                "  cd llama.cpp && make\n"
-                "  export LLAMA_CPP_DIR=$(pwd)"
-            )
+            error_msg = "llama.cpp tools not found!\n"
+            error_msg += f"LLAMA_CPP_DIR: {self.llama_cpp_dir}\n\n"
+            
+            if self.llama_cpp_dir and self.llama_cpp_dir.exists():
+                # Directory exists but tools missing
+                quantize_bin = self._find_quantize_binary()
+                if not quantize_bin:
+                    error_msg += "Quantize binary not found. Searched locations:\n"
+                    for candidate in [
+                        "build/bin/llama-quantize",
+                        "build/bin/quantize",
+                        "build/llama-quantize",
+                        "build/quantize",
+                        "llama-quantize",
+                        "quantize",
+                    ]:
+                        path = self.llama_cpp_dir / candidate
+                        error_msg += f"  - {path} {'(exists but not executable)' if path.exists() else '(not found)'}\n"
+                    error_msg += "\nTo build llama.cpp with CMake:\n"
+                    error_msg += "  cd ~/milton && bash scripts/setup_llama_cpp.sh\n"
+                    error_msg += "  export LLAMA_CPP_DIR=$HOME/llama.cpp\n"
+            else:
+                # Directory doesn't exist or not set
+                error_msg += "To install and build llama.cpp:\n"
+                error_msg += "  cd ~/milton && bash scripts/setup_llama_cpp.sh\n"
+                error_msg += "  export LLAMA_CPP_DIR=$HOME/llama.cpp\n"
+            
+            raise RuntimeError(error_msg)
         
         if config.format != "gguf":
             raise ValueError(
@@ -254,7 +299,10 @@ class ModelCompression:
             logger.info(f"Step 2: Quantizing to {config.quant_type}...")
             
             final_gguf = output_path / f"model-{config.quant_type.lower()}.gguf"
-            quantize_bin = self.llama_cpp_dir / "llama-quantize"
+            quantize_bin = self._find_quantize_binary()
+            
+            if not quantize_bin:
+                raise RuntimeError("Quantize binary not found (should have been caught earlier)")
             
             quant_cmd = [
                 str(quantize_bin),
