@@ -20,7 +20,12 @@ from integrations import (
     CalendarAPI,
     WebSearchAPI,
 )
-from agents.memory_hooks import memory_enabled, record_memory, should_store_responses
+from agents.memory_hooks import (
+    MemoryContextHook,
+    memory_enabled,
+    record_memory,
+    should_store_responses,
+)
 from agents.tool_registry import (
     ToolDefinition,
     ToolResult,
@@ -32,7 +37,7 @@ from agents.contracts import (
     generate_task_id,
     generate_iso_timestamp,
 )
-from memory.retrieve import query_relevant
+from memory.retrieve import query_relevant, query_relevant_hybrid
 from memory.schema import MemoryItem
 from milton_orchestrator.state_paths import resolve_state_dir
 from phd_context import (
@@ -197,6 +202,14 @@ class NEXUS:
         self.web_lookup_max_results = int(os.getenv("WEB_LOOKUP_MAX_RESULTS", "5"))
         self.tool_registry = get_tool_registry()
         self._register_default_tools()
+        
+        # Initialize memory context hook with semantic search
+        self.memory_hook = MemoryContextHook(
+            agent="NEXUS",
+            use_semantic=True,
+            semantic_weight=0.5,  # Balanced hybrid for orchestration
+            recency_bias=0.7,  # Higher recency bias for briefings
+        )
 
         # Initialize prompting pipeline if available
         self._prompting_pipeline: Optional["PromptingPipeline"] = None
@@ -210,7 +223,7 @@ class NEXUS:
             except Exception as e:
                 logger.warning(f"Failed to initialize prompting pipeline: {e}")
 
-        logger.info("NEXUS agent initialized")
+        logger.info("NEXUS agent initialized with semantic memory context")
 
     def _load_system_prompt(self) -> str:
         """Load NEXUS system prompt from Prompts folder with PhD context."""
@@ -470,10 +483,13 @@ class NEXUS:
 
         max_chars = int(os.getenv("MILTON_MEMORY_CONTEXT_MAX_CHARS", str(budget_tokens * 4)))
 
-        memories = query_relevant(
+        # Use hybrid retrieval with semantic search
+        memories = query_relevant_hybrid(
             user_text,
             limit=limit,
             recency_bias=recency_bias,
+            semantic_weight=0.5,  # Balanced hybrid
+            mode="hybrid",
         )
 
         bullets: list[ContextBullet] = []
