@@ -19,6 +19,76 @@ from milton_orchestrator.state_paths import resolve_state_dir
 logger = logging.getLogger(__name__)
 
 
+def validate_peft_adapter_dir(adapter_path: Path) -> None:
+    """
+    Validate that a directory contains a valid PEFT LoRA adapter.
+    
+    Required files:
+    - adapter_config.json with "peft_type" key
+    - Adapter weights file (adapter_model.safetensors OR adapter_model.bin)
+    
+    Args:
+        adapter_path: Path to adapter directory
+    
+    Raises:
+        RuntimeError: If adapter is invalid (with clear message about what's missing)
+    """
+    if not adapter_path.exists():
+        raise RuntimeError(
+            f"Adapter directory does not exist: {adapter_path}\n"
+            f"Run LoRA training to create a valid adapter."
+        )
+    
+    if not adapter_path.is_dir():
+        raise RuntimeError(
+            f"Adapter path is not a directory: {adapter_path}"
+        )
+    
+    # Check for adapter_config.json
+    config_path = adapter_path / "adapter_config.json"
+    if not config_path.exists():
+        raise RuntimeError(
+            f"Missing adapter_config.json in: {adapter_path}\n"
+            f"This is not a valid PEFT adapter directory.\n"
+            f"Run LoRA training to create a valid adapter."
+        )
+    
+    # Validate config has peft_type
+    try:
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"Invalid JSON in adapter_config.json: {adapter_path}\n"
+            f"Error: {e}"
+        )
+    
+    if "peft_type" not in config:
+        raise RuntimeError(
+            f"Missing 'peft_type' in adapter_config.json: {adapter_path}\n"
+            f"This is not a valid PEFT adapter.\n"
+            f"Found keys: {list(config.keys())}\n"
+            f"Run LoRA training to create a valid adapter."
+        )
+    
+    # Check for weights file
+    safetensors_path = adapter_path / "adapter_model.safetensors"
+    bin_path = adapter_path / "adapter_model.bin"
+    
+    has_weights = safetensors_path.exists() or bin_path.exists()
+    
+    if not has_weights:
+        raise RuntimeError(
+            f"Missing adapter weights in: {adapter_path}\n"
+            f"Expected: adapter_model.safetensors OR adapter_model.bin\n"
+            f"This is not a valid PEFT adapter.\n"
+            f"Run LoRA training to create a valid adapter."
+        )
+    
+    # If we get here, the adapter is valid
+    logger.debug(f"Validated PEFT adapter: {adapter_path}")
+
+
 @dataclass
 class AdapterInfo:
     """Information about a registered adapter."""
@@ -142,7 +212,13 @@ class AdapterManager:
             
         Returns:
             AdapterInfo object
+            
+        Raises:
+            RuntimeError: If adapter directory is not a valid PEFT adapter
         """
+        # Validate adapter is a real PEFT adapter
+        validate_peft_adapter_dir(adapter_path)
+        
         timestamp = datetime.now(timezone.utc).isoformat()
         version = timestamp.split('T')[0].replace('-', '')
         
@@ -181,10 +257,23 @@ class AdapterManager:
             
         Returns:
             True if successful, False otherwise
+            
+        Raises:
+            RuntimeError: If adapter is not a valid PEFT adapter
         """
         if name not in self._registry:
             logger.error(f"Adapter not found: {name}")
             return False
+        
+        # Validate adapter before activating
+        adapter_info = self._registry[name]
+        adapter_path = Path(adapter_info.adapter_path)
+        
+        try:
+            validate_peft_adapter_dir(adapter_path)
+        except RuntimeError as e:
+            logger.error(f"Cannot activate invalid adapter '{name}': {e}")
+            raise
         
         # Deactivate all adapters
         for adapter_name in self._registry:
@@ -296,9 +385,23 @@ class AdapterManager:
         
         Returns:
             AdapterInfo of active adapter, or None if no adapter is active
+            
+        Raises:
+            RuntimeError: If active adapter is not a valid PEFT adapter
         """
         for adapter in self._registry.values():
             if adapter.active:
+                # Validate that the active adapter is still valid
+                adapter_path = Path(adapter.adapter_path)
+                try:
+                    validate_peft_adapter_dir(adapter_path)
+                except RuntimeError as e:
+                    raise RuntimeError(
+                        f"Active adapter '{adapter.name}' is invalid:\n{e}\n\n"
+                        f"To fix this:\n"
+                        f"1. Run LoRA training to create a valid adapter\n"
+                        f"2. Or deactivate this adapter and create a new one"
+                    ) from e
                 return adapter
         return None
     
