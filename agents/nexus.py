@@ -61,6 +61,127 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# One-way phone mode prompt injection
+# Used when requests come from ntfy/phone where user cannot respond to follow-ups
+ONE_WAY_PHONE_MODE_PROMPT = """
+## ONE-WAY CHANNEL MODE (ACTIVE)
+
+This request came via a one-way channel (phone/ntfy). The user CANNOT respond to follow-up questions.
+
+CRITICAL RULES:
+1. NEVER ask clarifying questions - proceed with best-effort assumptions
+2. NEVER ask "Can you provide more details?" or similar
+3. NEVER include phrases like "I need more information" or "Please clarify"
+4. If information is missing, state your assumption and proceed
+5. Provide actionable output even if incomplete
+
+REQUIRED RESPONSE FORMAT:
+**Summary:** [1-2 sentence answer or action taken]
+
+**Assumptions:** (if any missing info was assumed)
+- [assumption 1]
+- [assumption 2]
+
+**Next Steps:**
+- [actionable step 1]
+- [actionable step 2]
+
+END
+"""
+
+# Patterns that indicate clarification loop behavior (to be caught by post-guard)
+CLARIFICATION_PATTERNS = [
+    r"(?:can you|could you|please)\s+(?:provide|give|tell|share|clarify)",
+    r"(?:need|require)\s+(?:more|additional|further)\s+(?:info|information|details|context)",
+    r"(?:what|which)\s+(?:specifically|exactly)\s+(?:do you|would you)",
+    r"(?:before I|to help you better|to assist you)",
+    r"(?:unclear|ambiguous|vague)\s+(?:about|what)",
+    r"I(?:'m| am) (?:not sure|uncertain|unsure) (?:about |what )",
+    r"(?:please specify|specify which|which one)",
+]
+
+
+def detect_clarification_loop(response: str) -> bool:
+    """
+    Detect if a response contains clarification-seeking patterns.
+
+    Returns True if the response appears to be asking for more info.
+    """
+    lowered = response.lower()
+
+    # Count question marks (>2 suggests multiple clarifying questions)
+    question_count = response.count("?")
+    if question_count > 2:
+        logger.debug(f"Clarification loop detected: {question_count} question marks")
+        return True
+
+    # Check for clarification patterns
+    for pattern in CLARIFICATION_PATTERNS:
+        if re.search(pattern, lowered, re.IGNORECASE):
+            logger.debug(f"Clarification loop detected: matched pattern '{pattern}'")
+            return True
+
+    return False
+
+
+def rewrite_to_one_way_format(response: str, original_query: str) -> str:
+    """
+    Rewrite a clarification-seeking response into one-way format.
+
+    Extracts any useful content and reformats with assumptions and next steps.
+    """
+    # Extract any sentences that don't contain questions
+    lines = response.split('\n')
+    useful_lines = []
+    questions = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if '?' in stripped:
+            questions.append(stripped)
+        else:
+            useful_lines.append(stripped)
+
+    # Build summary from non-question content
+    summary = ' '.join(useful_lines[:2]) if useful_lines else "Proceeding with available information."
+    if len(summary) > 200:
+        summary = summary[:197] + "..."
+
+    # Convert questions to assumptions
+    assumptions = []
+    for q in questions[:3]:  # Max 3 assumptions
+        # Convert question to assumption
+        assumption = q.rstrip('?').strip()
+        assumption = re.sub(r'^(what|which|how|where|when|why|can you|could you|please)\s+', '', assumption, flags=re.I)
+        assumption = re.sub(r'^(is|are|do|does|will|would)\s+', '', assumption, flags=re.I)
+        if assumption and len(assumption) > 10:
+            assumptions.append(f"Assuming: {assumption[:100]}")
+
+    if not assumptions:
+        assumptions = ["Proceeding with general context from request"]
+
+    # Build next steps from query context
+    next_steps = [
+        "Review this response and provide additional context if needed",
+        "Send a follow-up message with specific requirements",
+    ]
+
+    # Format the rewritten response
+    result = f"""**Summary:** {summary}
+
+**Assumptions:**
+{chr(10).join(f'- {a}' for a in assumptions)}
+
+**Next Steps:**
+{chr(10).join(f'- {s}' for s in next_steps)}
+
+END"""
+
+    logger.info("Rewrote clarification-seeking response to one-way format")
+    return result
+
 
 @dataclass(frozen=True)
 class RoutingDecision:
@@ -82,6 +203,7 @@ class ContextPacket:
     bullets: list[ContextBullet] = field(default_factory=list)
     unknowns: list[str] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
+    kg_context: Optional[str] = None  # KG context section
 
     @property
     def context_ids(self) -> list[str]:
@@ -113,6 +235,11 @@ class ContextPacket:
                 lines.append(f"- Assumption: {item}")
         if not self.unknowns and not self.assumptions:
             lines.append("- None")
+
+        # Add KG context if available
+        if self.kg_context:
+            lines.append("")  # Blank line separator
+            lines.append(self.kg_context)
 
         return "\n".join(lines)
 
@@ -506,6 +633,7 @@ class NEXUS:
                 bullets=[],
                 unknowns=["Memory disabled or empty request."],
                 assumptions=[],
+                kg_context=None,
             )
 
         # PhD-aware context building
@@ -567,11 +695,23 @@ class NEXUS:
                     evidence_ids=["phd-profile"]
                 ))
 
+        # Build KG context (Phase 4)
+        kg_context_text = None
+        try:
+            from agents.kg_context import build_kg_context
+            kg_packet = build_kg_context(user_text, top_k=5)
+            if not kg_packet.is_empty():
+                kg_context_text = kg_packet.to_prompt_section()
+                logger.debug(f"Added KG context: {len(kg_context_text)} chars")
+        except Exception as e:
+            logger.debug(f"KG context injection failed (gracefully continuing): {e}")
+
         return ContextPacket(
             query=user_text,
             bullets=bullets,
             unknowns=unknowns,
             assumptions=assumptions,
+            kg_context=kg_context_text,
         )
 
     def _format_context_bullet(self, item: MemoryItem) -> str:
@@ -965,17 +1105,52 @@ class NEXUS:
         trigger_terms = ("source", "sources", "cite", "citation", "reference")
         return any(term in message.lower() for term in trigger_terms)
 
-    def answer(self, message: str, use_web: Optional[bool] = None) -> str:
+    def answer(
+        self,
+        message: str,
+        use_web: Optional[bool] = None,
+        one_way_mode: bool = False,
+    ) -> str:
+        """
+        Answer a user message.
+
+        Args:
+            message: User's message
+            use_web: Whether to use web lookup (None = auto-detect)
+            one_way_mode: If True, enforce one-way channel mode (no clarification questions)
+
+        Returns:
+            Response text
+        """
+        # Build system prompt with optional one-way mode injection
+        system_prompt = self.system_prompt
+        if one_way_mode:
+            system_prompt = f"{self.system_prompt}\n\n{ONE_WAY_PHONE_MODE_PROMPT}"
+            logger.info("One-way phone mode enabled - clarification questions disabled")
+
         if self._should_use_web_lookup(message, use_web):
-            return self.answer_with_web_lookup(message)
-        return self._call_llm(message, system_prompt=self.system_prompt)
+            response = self._answer_with_web_lookup(message, system_prompt=system_prompt)
+        else:
+            response = self._call_llm(message, system_prompt=system_prompt)
+
+        # Post-generation guard for one-way mode
+        if one_way_mode and detect_clarification_loop(response):
+            logger.warning("Post-guard triggered: rewriting clarification-seeking response")
+            response = rewrite_to_one_way_format(response, message)
+
+        return response
 
     def answer_with_web_lookup(self, message: str) -> str:
+        """Legacy wrapper for backward compatibility."""
+        return self._answer_with_web_lookup(message, system_prompt=self.system_prompt)
+
+    def _answer_with_web_lookup(self, message: str, system_prompt: str) -> str:
+        """Internal web lookup implementation with configurable system prompt."""
         results = self.web_search.search(
             message, max_results=self.web_lookup_max_results
         )
         if not results:
-            return self._call_llm(message, system_prompt=self.system_prompt)
+            return self._call_llm(message, system_prompt=system_prompt)
 
         sources_block = "\n".join(
             f"[{i}] {item['title']} - {item['url']}"
@@ -988,7 +1163,7 @@ class NEXUS:
             "claim, say you couldn't verify it.\n\n"
             f"Question: {message}\n\nSources:\n{sources_block}"
         )
-        response = self._call_llm(prompt, system_prompt=self.system_prompt)
+        response = self._call_llm(prompt, system_prompt=system_prompt)
 
         if "Sources:" not in response:
             response = f"{response.strip()}\n\nSources:\n{sources_block}"

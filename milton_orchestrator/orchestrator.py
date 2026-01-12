@@ -29,6 +29,7 @@ from .reminders import (
     format_timestamp_local,
     parse_reminder_command,
 )
+from .self_upgrade_entry import process_self_upgrade_request
 
 logger = logging.getLogger(__name__)
 
@@ -657,6 +658,45 @@ class Orchestrator:
             title="Reminder Scheduled",
         )
 
+    def process_self_upgrade_request(self, request_id: str, content: str):
+        """Process SELF_UPGRADE requests."""
+        logger.info(f"Processing SELF_UPGRADE request {request_id}")
+        
+        self.publish_status(
+            f"[{request_id}] Self-upgrade request received. Analyzing...",
+            title="Self-Upgrade Request",
+        )
+        
+        try:
+            summary = process_self_upgrade_request(
+                request_id,
+                content,
+                repo_root=self.config.target_repo,
+            )
+            
+            title = self._output_title(request_id, "Self-Upgrade", success=True)
+            publish_response(
+                self.ntfy_client,
+                self.config.answer_topic,
+                title,
+                summary,
+                request_id,
+                self.config,
+                mode_tag="self_upgrade",
+            )
+        
+        except Exception as exc:
+            logger.error(
+                "Error processing self-upgrade request %s: %s",
+                request_id,
+                exc,
+                exc_info=True,
+            )
+            self.publish_status(
+                f"❌ [{request_id}] Self-upgrade failed: {exc}",
+                title="Self-Upgrade Error",
+            )
+
     def _run_perplexity(self, content: str) -> Optional[str]:
         research_notes = self.perplexity_client.research_and_optimize(
             content,
@@ -743,6 +783,8 @@ class Orchestrator:
                     return "REMINDER", payload, "REMIND"
                 if kind == "ALARM":
                     return "REMINDER", payload, "ALARM"
+                if kind == "SELF_UPGRADE":
+                    return "SELF_UPGRADE", payload, None
 
         return "CHAT", text.strip(), None
 
@@ -846,6 +888,8 @@ class Orchestrator:
             if not reminder_kind:
                 reminder_kind = "REMIND"
             self.process_reminder_request(request_id, payload, reminder_kind)
+        elif mode == "SELF_UPGRADE":
+            self.process_self_upgrade_request(request_id, payload)
         else:
             self.process_chat_request(request_id, payload)
 
@@ -1009,7 +1053,7 @@ def _strip_prefix(text: str, prefix: str) -> str:
 
 
 def _match_prefix(text: str) -> Optional[tuple[str, str]]:
-    for kind in ("CLAUDE", "CODEX", "RESEARCH", "REMIND", "ALARM"):
+    for kind in ("CLAUDE", "CODEX", "RESEARCH", "REMIND", "ALARM", "SELF_UPGRADE"):
         payload = _strip_prefix_with_optional_brackets(text, kind)
         if payload != text:
             return kind, payload.strip()

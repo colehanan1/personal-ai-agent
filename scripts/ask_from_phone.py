@@ -35,6 +35,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from milton_orchestrator.state_paths import resolve_state_dir
 from milton_orchestrator.input_normalizer import normalize_incoming_input
+from milton_orchestrator.ntfy_summarizer import finalize_for_ntfy, NtfyFinalizedMessage
 from goals.api import add_goal, list_goals
 
 load_dotenv()
@@ -44,8 +45,15 @@ NTFY_TOPIC = os.getenv("NTFY_TOPIC", "milton-briefing-code")
 QUESTIONS_TOPIC = f"{NTFY_TOPIC}-ask"
 DRY_RUN = os.getenv("PHONE_LISTENER_DRY_RUN", "false").lower() == "true"
 
+# ntfy size limits (from config, with defaults)
+NTFY_MAX_INLINE_CHARS = int(os.getenv("NTFY_MAX_INLINE_CHARS", "3000"))
+OUTPUT_BASE_URL = os.getenv("OUTPUT_BASE_URL", "").strip() or None
+OUTPUT_FILENAME_TEMPLATE = os.getenv("OUTPUT_FILENAME_TEMPLATE", "milton_{request_id}.txt")
+
 # State paths
 STATE_DIR = resolve_state_dir()
+OUTPUT_DIR = STATE_DIR / "outputs" / "phone"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 AUDIT_LOG_DIR = STATE_DIR / "logs" / "phone_listener"
 AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -411,6 +419,9 @@ def route_to_nexus(query: str, prefix: Optional[str] = None) -> Dict[str, Any]:
     This is the ONLY way phone requests interact with Milton agents.
     No ad-hoc execution, all routing goes through NEXUS.
 
+    IMPORTANT: All phone requests use one_way_mode=True to prevent
+    clarification loops (user cannot respond to follow-up questions).
+
     Args:
         query: User query
         prefix: Optional routing hint (cortex/frontier/plain)
@@ -425,19 +436,20 @@ def route_to_nexus(query: str, prefix: Optional[str] = None) -> Dict[str, Any]:
         nexus = NEXUS()
 
         # Route based on prefix
+        # NOTE: one_way_mode=True ensures no clarification questions
         if prefix == "cortex":
             # Direct to CORTEX via NEXUS delegation
-            logger.info(f"Routing to CORTEX via NEXUS: {query[:60]}...")
+            logger.info(f"Routing to CORTEX via NEXUS (one-way mode): {query[:60]}...")
             # NEXUS will decide whether to delegate or handle directly
-            response = nexus.answer(query)
+            response = nexus.answer(query, one_way_mode=True)
         elif prefix == "frontier":
             # Direct to FRONTIER via NEXUS delegation
-            logger.info(f"Routing to FRONTIER via NEXUS: {query[:60]}...")
-            response = nexus.answer(query)
+            logger.info(f"Routing to FRONTIER via NEXUS (one-way mode): {query[:60]}...")
+            response = nexus.answer(query, one_way_mode=True)
         else:
             # Let NEXUS decide routing
-            logger.info(f"Routing to NEXUS (auto-route): {query[:60]}...")
-            response = nexus.answer(query)
+            logger.info(f"Routing to NEXUS (one-way mode): {query[:60]}...")
+            response = nexus.answer(query, one_way_mode=True)
 
         return {
             "answer": response,
@@ -531,10 +543,50 @@ def execute_allowed_action(action: str, query: str, prefix: Optional[str]) -> Di
 # ntfy Integration
 # ==============================================================================
 
-def send_response_to_phone(response_text: str, topic: Optional[str] = None) -> bool:
-    """Send response back to iPhone via ntfy."""
+def send_response_to_phone(
+    response_text: str,
+    topic: Optional[str] = None,
+    request_id: Optional[str] = None,
+) -> bool:
+    """
+    Send response back to iPhone via ntfy with hard size enforcement.
+
+    If the response exceeds NTFY_MAX_INLINE_CHARS:
+    1. Full output is saved to OUTPUT_DIR
+    2. A summary + link/path is sent instead
+
+    Args:
+        response_text: Full response text
+        topic: ntfy topic (defaults to NTFY_TOPIC)
+        request_id: Unique request ID for output filename
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not request_id:
+        request_id = f"phone_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Finalize the response for ntfy (enforces size limit)
+    finalized = finalize_for_ntfy(
+        full_text=response_text,
+        request_id=request_id,
+        max_inline_chars=NTFY_MAX_INLINE_CHARS,
+        output_dir=OUTPUT_DIR,
+        output_base_url=OUTPUT_BASE_URL,
+        output_filename_template=OUTPUT_FILENAME_TEMPLATE,
+    )
+
+    if finalized.was_truncated:
+        logger.info(
+            f"Response truncated for ntfy: {len(response_text)} -> {len(finalized.inline_text)} chars"
+        )
+        if finalized.output_path:
+            logger.info(f"Full output saved to: {finalized.output_path}")
+        if finalized.output_url:
+            logger.info(f"Output URL: {finalized.output_url}")
+
     if DRY_RUN:
-        logger.info(f"[DRY RUN] Would send to phone: {response_text[:100]}...")
+        logger.info(f"[DRY RUN] Would send to phone: {finalized.inline_text[:100]}...")
         return True
 
     if not topic:
@@ -543,14 +595,21 @@ def send_response_to_phone(response_text: str, topic: Optional[str] = None) -> b
     try:
         import requests
 
+        # Build headers
+        headers = {
+            "Title": "Milton AI Response",
+            "Priority": "high",
+            "Tags": "robot,speech_balloon"
+        }
+
+        # Add click URL if available
+        if finalized.output_url:
+            headers["Click"] = finalized.output_url
+
         result = requests.post(
             f"https://ntfy.sh/{topic}",
-            data=response_text.encode('utf-8'),
-            headers={
-                "Title": "Milton AI Response",
-                "Priority": "high",
-                "Tags": "robot,speech_balloon"
-            },
+            data=finalized.inline_text.encode('utf-8'),
+            headers=headers,
             timeout=10
         )
         return result.status_code == 200
@@ -683,6 +742,9 @@ def listen_for_questions():
     logger.info(f"Listen topic:   {QUESTIONS_TOPIC}")
     logger.info(f"Response topic: {NTFY_TOPIC}")
     logger.info(f"Audit log dir:  {AUDIT_LOG_DIR}")
+    logger.info(f"Output dir:     {OUTPUT_DIR}")
+    logger.info(f"Max inline:     {NTFY_MAX_INLINE_CHARS} chars")
+    logger.info(f"Output URL:     {OUTPUT_BASE_URL or '(not configured)'}")
     logger.info(f"Dry-run mode:   {DRY_RUN}")
     logger.info("")
     logger.info("Allowed actions:")
@@ -721,13 +783,14 @@ def listen_for_questions():
 
                             if message and not message.startswith("This is a test"):
                                 ts = datetime.now().strftime('%H:%M:%S')
+                                request_id = f"phone_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                                 logger.info(f"[{ts}] 📱 Message: {message[:60]}...")
 
                                 # Handle message (parse, route, execute, audit)
                                 response_text = handle_incoming_message(message)
 
-                                # Send response
-                                if send_response_to_phone(response_text):
+                                # Send response (with size enforcement)
+                                if send_response_to_phone(response_text, request_id=request_id):
                                     logger.info(f"[{ts}] ✅ Response sent\n")
                                 else:
                                     logger.error(f"[{ts}] ❌ Failed to send response\n")

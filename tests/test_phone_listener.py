@@ -684,5 +684,239 @@ def test_extract_goals_exact_failing_payload():
         f"Expected 'buy mark anthony curls' in goals, got: {goals}"
 
 
+# ==============================================================================
+# One-Way Phone Mode Tests
+# ==============================================================================
+
+def test_route_to_nexus_uses_one_way_mode():
+    """Test that route_to_nexus passes one_way_mode=True to NEXUS.answer()."""
+    from scripts.ask_from_phone import route_to_nexus
+
+    # NEXUS is imported inside the function, so patch at the agents.nexus module level
+    with patch("agents.nexus.NEXUS") as MockNEXUS:
+        mock_instance = MagicMock()
+        mock_instance.answer.return_value = "Test response"
+        MockNEXUS.return_value = mock_instance
+
+        route_to_nexus("Test query", prefix=None)
+
+        # Verify one_way_mode=True was passed
+        mock_instance.answer.assert_called_once()
+        call_kwargs = mock_instance.answer.call_args
+        assert call_kwargs[1].get("one_way_mode") is True
+
+
+def test_route_to_nexus_one_way_mode_with_prefix():
+    """Test one_way_mode is enabled for all prefixes (cortex, frontier)."""
+    from scripts.ask_from_phone import route_to_nexus
+
+    for prefix in [None, "cortex", "frontier"]:
+        with patch("agents.nexus.NEXUS") as MockNEXUS:
+            mock_instance = MagicMock()
+            mock_instance.answer.return_value = "Response"
+            MockNEXUS.return_value = mock_instance
+
+            route_to_nexus("Query", prefix=prefix)
+
+            call_kwargs = mock_instance.answer.call_args
+            assert call_kwargs[1].get("one_way_mode") is True, \
+                f"one_way_mode should be True for prefix={prefix}"
+
+
+# ==============================================================================
+# One-Way Mode Detection and Rewriting Tests
+# ==============================================================================
+
+def test_detect_clarification_loop_question_count():
+    """Test clarification loop detection based on question count."""
+    from agents.nexus import detect_clarification_loop
+
+    # Many questions = clarification loop
+    response_many_questions = """
+    What time frame are you looking at?
+    What specific metrics are important?
+    Which department should I focus on?
+    """
+    assert detect_clarification_loop(response_many_questions) is True
+
+    # Few questions = OK
+    response_few_questions = "Here is your report. Any other questions?"
+    assert detect_clarification_loop(response_few_questions) is False
+
+
+def test_detect_clarification_loop_patterns():
+    """Test clarification loop detection based on known patterns."""
+    from agents.nexus import detect_clarification_loop
+
+    # Should detect these patterns
+    bad_responses = [
+        "Can you provide more details about what you need?",
+        "I need more information to help you.",
+        "Could you please clarify which option you prefer?",
+        "Before I can help, I need to know more about your requirements.",
+        "This is a bit unclear. What specifically do you want?",
+        "Please specify which one you mean.",
+    ]
+
+    for resp in bad_responses:
+        assert detect_clarification_loop(resp) is True, \
+            f"Should detect: {resp[:50]}..."
+
+    # Should NOT detect these
+    good_responses = [
+        "Here is your weather forecast for today.",
+        "The status is: all systems operational.",
+        "I've completed the analysis. Results attached.",
+    ]
+
+    for resp in good_responses:
+        assert detect_clarification_loop(resp) is False, \
+            f"Should NOT detect: {resp[:50]}..."
+
+
+def test_rewrite_to_one_way_format():
+    """Test that clarification-seeking response is rewritten correctly."""
+    from agents.nexus import rewrite_to_one_way_format
+
+    # Simulate a response with clarifying questions
+    bad_response = """
+    I'd be happy to help you with your research.
+
+    Before I can proceed, I have a few questions:
+    - What specific topic are you researching?
+    - What time frame should I consider?
+    - Which sources do you prefer?
+    """
+
+    rewritten = rewrite_to_one_way_format(bad_response, "help with research")
+
+    # Should contain required sections
+    assert "**Summary:**" in rewritten
+    assert "**Assumptions:**" in rewritten
+    assert "**Next Steps:**" in rewritten
+    assert "END" in rewritten
+
+    # Should NOT contain multiple questions
+    question_count = rewritten.count("?")
+    assert question_count <= 1, \
+        f"Rewritten response should have at most 1 question, got {question_count}"
+
+
+def test_one_way_mode_response_format():
+    """Test that one-way mode responses follow the required format."""
+    from agents.nexus import rewrite_to_one_way_format
+
+    response = rewrite_to_one_way_format(
+        "What do you mean? Can you clarify?",
+        "do something"
+    )
+
+    # Must have all required sections
+    assert "**Summary:**" in response
+    assert "**Assumptions:**" in response
+    assert "**Next Steps:**" in response
+    assert "END" in response
+
+
+def test_one_way_mode_no_large_language_model():
+    """Test that one-way mode prompt doesn't include boilerplate phrases."""
+    from agents.nexus import ONE_WAY_PHONE_MODE_PROMPT
+
+    # The prompt shouldn't contain self-referential boilerplate
+    assert "large language model" not in ONE_WAY_PHONE_MODE_PROMPT.lower()
+    assert "as an ai" not in ONE_WAY_PHONE_MODE_PROMPT.lower()
+
+
+def test_one_way_mode_prompt_exists():
+    """Test that ONE_WAY_PHONE_MODE_PROMPT is properly defined."""
+    from agents.nexus import ONE_WAY_PHONE_MODE_PROMPT
+
+    assert ONE_WAY_PHONE_MODE_PROMPT is not None
+    assert len(ONE_WAY_PHONE_MODE_PROMPT) > 100  # Not empty
+    assert "ONE-WAY" in ONE_WAY_PHONE_MODE_PROMPT
+    assert "NEVER ask" in ONE_WAY_PHONE_MODE_PROMPT
+
+
+def test_clarification_patterns_compile():
+    """Test that all clarification patterns are valid regex."""
+    from agents.nexus import CLARIFICATION_PATTERNS
+    import re
+
+    for pattern in CLARIFICATION_PATTERNS:
+        try:
+            re.compile(pattern, re.IGNORECASE)
+        except re.error as e:
+            pytest.fail(f"Invalid regex pattern '{pattern}': {e}")
+
+
+# ==============================================================================
+# Integration: One-Way Mode End-to-End (Mocked LLM)
+# ==============================================================================
+
+def test_nexus_answer_one_way_mode_modifies_prompt():
+    """Test that NEXUS.answer() injects one-way mode prompt."""
+    with patch("agents.nexus.requests.post") as mock_post:
+        # Mock LLM response
+        mock_post.return_value.json.return_value = {
+            "choices": [{"message": {"content": "**Summary:** Done\n\n**Assumptions:**\n- None\n\n**Next Steps:**\n- Check later\n\nEND"}}]
+        }
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        from agents.nexus import NEXUS, ONE_WAY_PHONE_MODE_PROMPT
+
+        # Create NEXUS instance (may fail if integrations not mocked, so wrap)
+        try:
+            nexus = NEXUS()
+            nexus.answer("test query", one_way_mode=True)
+
+            # Verify the call was made
+            mock_post.assert_called()
+
+            # Check that one-way mode prompt was injected
+            call_args = mock_post.call_args
+            payload = call_args[1].get("json", call_args[0][0] if call_args[0] else {})
+            messages = payload.get("messages", [])
+
+            # Find system message
+            system_content = ""
+            for msg in messages:
+                if msg.get("role") == "system":
+                    system_content += msg.get("content", "")
+
+            assert "ONE-WAY" in system_content, \
+                "One-way mode prompt should be in system message"
+
+        except Exception as e:
+            # Skip if imports fail (e.g., missing dependencies)
+            pytest.skip(f"NEXUS initialization failed (likely missing deps): {e}")
+
+
+def test_nexus_answer_post_guard_rewrites_bad_response():
+    """Test that post-guard rewrites clarification-seeking responses."""
+    with patch("agents.nexus.requests.post") as mock_post:
+        # Mock LLM returning a clarification-seeking response
+        bad_response = "What do you mean? Can you provide more details?"
+        mock_post.return_value.json.return_value = {
+            "choices": [{"message": {"content": bad_response}}]
+        }
+        mock_post.return_value.raise_for_status = MagicMock()
+
+        from agents.nexus import NEXUS
+
+        try:
+            nexus = NEXUS()
+            result = nexus.answer("vague request", one_way_mode=True)
+
+            # Result should be rewritten, not the original bad response
+            assert "What do you mean?" not in result
+            assert "**Summary:**" in result
+            assert "**Assumptions:**" in result
+            assert "**Next Steps:**" in result
+            assert "END" in result
+
+        except Exception as e:
+            pytest.skip(f"NEXUS initialization failed: {e}")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

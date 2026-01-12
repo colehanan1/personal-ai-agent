@@ -4,14 +4,174 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CHARS = 160
+DEFAULT_MAX_INLINE_CHARS = 3000
 EMPTY_SUMMARY_MESSAGE = "No content to summarize"
 MISSING_FILE_MESSAGE = "Summary unavailable (file missing)"
+
+
+@dataclass
+class NtfyFinalizedMessage:
+    """Result of finalizing a message for ntfy delivery."""
+
+    inline_text: str  # Text to send inline (always within limit)
+    output_path: Optional[Path]  # Path to full output file (if created)
+    output_url: Optional[str]  # URL to full output (if available)
+    was_truncated: bool  # Whether full text was too long
+
+
+def finalize_for_ntfy(
+    full_text: str,
+    request_id: str,
+    max_inline_chars: int = DEFAULT_MAX_INLINE_CHARS,
+    output_dir: Optional[Path] = None,
+    output_base_url: Optional[str] = None,
+    output_filename_template: str = "milton_{request_id}.txt",
+) -> NtfyFinalizedMessage:
+    """
+    Finalize a response for ntfy delivery with hard size enforcement.
+
+    If the full text exceeds max_inline_chars:
+    1. Write full text to output_dir (if provided)
+    2. Return a summary + link (or path) that fits within limit
+
+    Args:
+        full_text: Full response text to finalize
+        request_id: Unique request identifier for filename
+        max_inline_chars: Maximum characters for inline message
+        output_dir: Directory to write output files (optional)
+        output_base_url: Base URL for output links (optional)
+        output_filename_template: Template for output filenames
+
+    Returns:
+        NtfyFinalizedMessage with inline text and optional file info
+    """
+    if not full_text:
+        return NtfyFinalizedMessage(
+            inline_text="No response generated.",
+            output_path=None,
+            output_url=None,
+            was_truncated=False,
+        )
+
+    # If text fits, return as-is (with safety truncation)
+    if len(full_text) <= max_inline_chars:
+        return NtfyFinalizedMessage(
+            inline_text=full_text,
+            output_path=None,
+            output_url=None,
+            was_truncated=False,
+        )
+
+    # Text exceeds limit - need to truncate and optionally save to file
+    output_path: Optional[Path] = None
+    output_url: Optional[str] = None
+
+    # Try to save to file if output_dir is provided
+    if output_dir:
+        try:
+            output_path = _save_output_file(
+                full_text, request_id, output_dir, output_filename_template
+            )
+            if output_base_url:
+                output_url = f"{output_base_url.rstrip('/')}/{output_path.name}"
+        except OSError as exc:
+            logger.error(f"Failed to save output file: {exc}")
+            output_path = None
+
+    # Build inline message with summary + link/path
+    inline_text = _build_truncated_message(
+        full_text=full_text,
+        max_chars=max_inline_chars,
+        output_path=output_path,
+        output_url=output_url,
+    )
+
+    return NtfyFinalizedMessage(
+        inline_text=inline_text,
+        output_path=output_path,
+        output_url=output_url,
+        was_truncated=True,
+    )
+
+
+def _save_output_file(
+    text: str,
+    request_id: str,
+    output_dir: Path,
+    filename_template: str,
+) -> Path:
+    """Save text to output file, returning the path."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Sanitize request_id for filename
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", request_id.strip()) or "request"
+
+    try:
+        filename = filename_template.format(request_id=safe_id)
+    except (KeyError, ValueError):
+        filename = f"milton_{safe_id}.txt"
+
+    # Sanitize filename
+    filename = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename).name)
+    if not filename:
+        filename = f"milton_{safe_id}.txt"
+
+    filepath = output_dir / filename
+
+    # Handle collisions
+    if filepath.exists():
+        stem = filepath.stem or "output"
+        suffix = filepath.suffix or ".txt"
+        for idx in range(1, 1000):
+            candidate = output_dir / f"{stem}_{idx}{suffix}"
+            if not candidate.exists():
+                filepath = candidate
+                break
+
+    filepath.write_text(text, encoding="utf-8")
+    logger.info(f"Saved full output to {filepath} ({len(text)} chars)")
+    return filepath
+
+
+def _build_truncated_message(
+    full_text: str,
+    max_chars: int,
+    output_path: Optional[Path],
+    output_url: Optional[str],
+) -> str:
+    """Build a truncated message with summary and link/path reference."""
+    # Extract a summary from the full text
+    summary = summarize_text(full_text, max_chars=min(max_chars // 2, 500))
+
+    # Build the reference line
+    if output_url:
+        ref_line = f"\n\n📄 Full output: {output_url}"
+    elif output_path:
+        ref_line = f"\n\n📄 Full output saved: {output_path}"
+    else:
+        ref_line = "\n\n(Full output was too long and could not be saved)"
+
+    # Calculate available space for summary
+    available = max_chars - len(ref_line) - 20  # Buffer for safety
+    if available < 50:
+        # Not enough space for summary, just show reference
+        return truncate_text(ref_line.strip(), max_chars)
+
+    # Truncate summary to fit
+    truncated_summary = truncate_text(summary, max_chars=available)
+
+    result = f"{truncated_summary}{ref_line}"
+
+    # Final safety truncation
+    return truncate_text(result, max_chars)
 
 
 def truncate_text(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> str:
