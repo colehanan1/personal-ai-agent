@@ -562,10 +562,19 @@ def test_cortex_process_overnight_job_returns_task_result():
     assert result.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
 
 
-def test_frontier_daily_discovery_returns_discovery_result():
+def test_frontier_daily_discovery_returns_discovery_result(tmp_path, monkeypatch):
     """Test that FRONTIER.daily_discovery returns DiscoveryResult."""
     from agents.frontier import FRONTIER
+    from agents.frontier_cache import DiscoveryCache
+    import agents.frontier_cache as frontier_cache
     from unittest.mock import MagicMock
+
+    monkeypatch.setenv("STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        frontier_cache,
+        "_global_cache",
+        DiscoveryCache(cache_dir=tmp_path / "cache" / "frontier"),
+    )
 
     frontier = FRONTIER()
 

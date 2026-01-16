@@ -15,6 +15,7 @@ import os
 import sys
 
 from dotenv import load_dotenv
+import logging
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
@@ -28,6 +29,9 @@ from memory.schema import MemoryItem
 from memory.store import add_memory, get_user_profile
 from memory.retrieve import query_relevant
 from milton_orchestrator.state_paths import resolve_state_dir
+from storage.briefing_store import BriefingStore
+
+logger = logging.getLogger(__name__)
 
 
 def _state_dir(base_dir: Optional[Path] = None) -> Path:
@@ -170,6 +174,52 @@ def _default_papers_provider(query: str, max_results: int) -> list[dict[str, Any
     return ArxivAPI().search_papers(query, max_results=max_results)
 
 
+def _load_custom_items(state_dir: Path, now: datetime, max_items: int = 10) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """Load active custom briefing items from store.
+    
+    Args:
+        state_dir: Base state directory where briefing.sqlite3 resides
+        now: Current UTC datetime for filtering expired items
+        max_items: Maximum number of items to return
+    
+    Returns:
+        Tuple of (items_list, error_message). If error, items_list is empty.
+    """
+    try:
+        db_path = state_dir / "briefing.sqlite3"
+        if not db_path.exists():
+            return [], None
+        
+        store = BriefingStore(db_path)
+        try:
+            # Get active items, exclude expired
+            briefing_items = store.list_items(status="active", include_expired=False)
+            
+            # Sort: priority DESC, due_at ASC (nulls last), created_at ASC
+            # list_items already sorts by priority DESC, created_at ASC
+            # We just need to sort by due_at within same priority
+            def sort_key(item):
+                # Priority descending (negative for reverse)
+                priority = -item.priority
+                # Due date ascending (None sorts last)
+                due_at = item.due_at if item.due_at else "9999-99-99"
+                # Created at ascending
+                created_at = item.created_at
+                return (priority, due_at, created_at)
+            
+            briefing_items.sort(key=sort_key)
+            
+            # Convert to dict format and limit
+            items_data = [item.to_dict() for item in briefing_items[:max_items]]
+            return items_data, None
+        finally:
+            store.close()
+            
+    except Exception as exc:
+        logger.warning(f"Failed to load custom briefing items: {exc}")
+        return [], f"store error: {str(exc)[:50]}"
+
+
 def _build_markdown(
     now: datetime,
     goals_today: list[str],
@@ -179,6 +229,8 @@ def _build_markdown(
     papers: list[dict[str, Any]],
     next_actions: list[str],
     phd_context: Optional[dict[str, Any]] = None,
+    custom_items: Optional[list[dict[str, Any]]] = None,
+    custom_items_error: Optional[str] = None,
 ) -> str:
     """Build markdown briefing content."""
     date_label = now.strftime("%Y-%m-%d (%A)" if phd_context else "%Y-%m-%d")
@@ -239,6 +291,36 @@ def _build_markdown(
             lines.append(f"- {record.get('job_id', 'job')}: {task}{artifact_note}")
     else:
         lines.append("- No completed jobs" + (" overnight" if phd_context else ""))
+    lines.append("")
+
+    # Custom Items / Reminders
+    custom_emoji = "📌 " if phd_context else ""
+    lines.append(f"## {custom_emoji}Custom Items / Reminders")
+    if custom_items_error:
+        lines.append(f"- Custom items unavailable ({custom_items_error})")
+    elif custom_items:
+        for item in custom_items:
+            content = item.get("content", "").strip()
+            priority = item.get("priority", 0)
+            due_at = item.get("due_at")
+            
+            # Format: "[P{priority}] {content} [due: {date}]"
+            parts = []
+            if priority != 0:
+                parts.append(f"[P{priority}]")
+            parts.append(content)
+            if due_at:
+                # Parse and format due date nicely
+                try:
+                    due_dt = datetime.fromisoformat(due_at.replace("Z", "+00:00"))
+                    due_str = due_dt.strftime("%Y-%m-%d")
+                    parts.append(f"[due: {due_str}]")
+                except (ValueError, AttributeError):
+                    pass
+            
+            lines.append(f"- {' '.join(parts)}")
+    else:
+        lines.append("- No custom items")
     lines.append("")
 
     # Weather
@@ -424,6 +506,9 @@ def generate_morning_briefing(
     # Get PhD context if in PhD mode
     phd_context = _get_phd_context() if phd_aware else None
 
+    # Get custom briefing items
+    custom_items, custom_items_error = _load_custom_items(base, timestamp)
+
     # Build next actions
     next_actions = goals_today[:3]
     if not next_actions and overnight_jobs:
@@ -449,7 +534,9 @@ def generate_morning_briefing(
             weather_error,
             papers,
             next_actions,
-            phd_context=phd_context
+            phd_context=phd_context,
+            custom_items=custom_items,
+            custom_items_error=custom_items_error,
         ),
         encoding="utf-8",
     )

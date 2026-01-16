@@ -120,3 +120,8 @@ __pycache__/
 *.pyc
 REPORT.md
 FIX_PLAN.json
+
+.DS_Store
+._*
+__pycache__/
+*.pyc

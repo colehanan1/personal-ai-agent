@@ -524,6 +524,11 @@ Milton includes 71+ test files covering unit tests, integration tests, and end-t
 # Quick validation
 python tests/test_phase2.py
 
+# Integration tests (opt-in; network/external services)
+pytest -q -m "not integration"
+RUN_INTEGRATION=1 pytest -q -m integration
+# Integration selection includes system-level or long-running tests; use -m integration explicitly.
+
 # Full test suite
 pytest -q
 

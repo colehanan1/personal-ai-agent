@@ -36,6 +36,8 @@ from memory.init_db import create_schema, get_client
 from memory.operations import MemoryOperations
 from milton_orchestrator.state_paths import resolve_state_dir
 from milton_orchestrator.input_normalizer import normalize_incoming_input
+from milton_orchestrator.reminders import ReminderStore, parse_time_expression
+from storage.briefing_store import BriefingStore
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,6 +58,10 @@ LLM_API_KEY = (
 )
 STATE_DIR = resolve_state_dir()
 
+# Initialize persistent stores
+briefing_store = BriefingStore(STATE_DIR / "briefing.sqlite3")
+reminder_store = ReminderStore(STATE_DIR / "reminders.sqlite3")
+
 app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
@@ -64,6 +70,18 @@ _REQUESTS: Dict[str, Dict[str, Any]] = {}
 _REQUESTS_LOCK = threading.Lock()
 _PROCESSED = set()
 _PROCESSED_LOCK = threading.Lock()
+
+_REQUEST_STATUS_MAP = {
+    "accepted": "QUEUED",
+    "queued": "QUEUED",
+    "pending": "QUEUED",
+    "in_progress": "RUNNING",
+    "running": "RUNNING",
+    "complete": "COMPLETE",
+    "completed": "COMPLETE",
+    "failed": "FAILED",
+}
+_TERMINAL_STATUSES = {"COMPLETE", "FAILED"}
 
 _VECTOR_COUNT = 0
 _VECTOR_COUNT_LOCK = threading.Lock()
@@ -90,6 +108,13 @@ def _now_iso() -> str:
 
 def _make_request_id() -> str:
     return f"req_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+
+
+def _normalize_request_status(raw_status: Optional[str]) -> str:
+    if not raw_status:
+        return "UNKNOWN"
+    lowered = str(raw_status).strip().lower()
+    return _REQUEST_STATUS_MAP.get(lowered, str(raw_status).strip().upper())
 
 
 def _send_ws(ws, message_type: str, **fields: Any) -> None:
@@ -486,10 +511,13 @@ def ask() -> Any:
             "integration_target": integration_target,
             "routing_reasoning": routing["reasoning"],
             "confidence": routing["confidence"],
-            "status": "accepted",
+            "status": "queued",
             "created_at": created_at,
+            "started_at": None,
+            "completed_at": None,
             "duration_ms": None,
             "response": None,
+            "error": None,
             "use_web": use_web,
             "goal_capture": goal_capture,
         }
@@ -525,6 +553,11 @@ def stream_request(ws, request_id: str) -> None:
 
     agent_name = req["agent_assigned"]
     integration_target = req.get("integration_target")
+
+    with _REQUESTS_LOCK:
+        req["status"] = "running"
+        if not req.get("started_at"):
+            req["started_at"] = _now_iso()
 
     _send_ws(
         ws,
@@ -571,6 +604,8 @@ def stream_request(ws, request_id: str) -> None:
         req["status"] = "failed" if error_text else "complete"
         req["duration_ms"] = duration_ms
         req["response"] = response_text
+        req["completed_at"] = _now_iso()
+        req["error"] = error_text
 
 
 @app.route("/api/system-state", methods=["GET"])
@@ -621,17 +656,27 @@ def recent_requests() -> Any:
     with _REQUESTS_LOCK:
         recent = list(_REQUESTS.values())[-20:]
 
-    payload = [
-        {
-            "id": r["id"],
-            "query": r["query"],
-            "agent": r["agent_assigned"],
-            "timestamp": r["created_at"],
-            "status": "COMPLETE" if r["status"] == "complete" else "FAILED",
-            "duration_ms": r["duration_ms"],
-        }
-        for r in recent
-    ]
+    payload = []
+    for r in recent:
+        status = _normalize_request_status(r.get("status"))
+        is_terminal = status in _TERMINAL_STATUSES
+        duration_ms = r.get("duration_ms") if is_terminal else None
+        duration_s = (duration_ms / 1000) if duration_ms is not None else None
+        payload.append(
+            {
+                "id": r["id"],
+                "query": r["query"],
+                "agent": r["agent_assigned"],
+                "timestamp": r["created_at"],
+                "created_at": r["created_at"],
+                "started_at": r.get("started_at"),
+                "completed_at": r.get("completed_at"),
+                "status": status,
+                "duration_ms": duration_ms,
+                "duration_s": duration_s,
+                "error": r.get("error"),
+            }
+        )
     return jsonify(payload)
 
 
@@ -729,49 +774,8 @@ def queue_status() -> Any:
         return jsonify({"error": "Failed to read queue status"}), 500
 
 
-@app.route("/api/reminders", methods=["GET"])
-def reminders() -> Any:
-    """
-    Reminders endpoint (read-only).
-
-    Returns next N active reminders.
-
-    Query params:
-    - limit: Number of reminders to return (default: 10, max: 100)
-    """
-    try:
-        limit = min(int(request.args.get("limit", "10")), 100)
-
-        # Import reminders module
-        try:
-            from milton_reminders.cli import list_reminders
-        except ImportError:
-            return jsonify({"reminders": [], "count": 0, "message": "Reminders module not available"})
-
-        # Get active reminders
-        reminders_list = list_reminders(status="active", limit=limit)
-
-        # Format for API
-        formatted = []
-        for reminder in reminders_list[:limit]:
-            formatted.append({
-                "id": reminder.get("id"),
-                "title": reminder.get("title"),
-                "due_at": reminder.get("due_at"),
-                "priority": reminder.get("priority", "medium"),
-                "tags": reminder.get("tags", []),
-                "created_at": reminder.get("created_at")
-            })
-
-        return jsonify({
-            "reminders": formatted,
-            "count": len(formatted),
-            "timestamp": _now_iso()
-        })
-
-    except Exception as e:
-        logger.error(f"Reminders error: {e}", exc_info=True)
-        return jsonify({"error": "Failed to fetch reminders"}), 500
+# NOTE: /api/reminders GET endpoint moved to Reminders Endpoints section below
+# (Was previously a stub using non-existent milton_reminders.cli module)
 
 
 @app.route("/api/outputs", methods=["GET"])
@@ -875,8 +879,332 @@ def memory_search() -> Any:
         return jsonify({"error": "Memory search failed"}), 500
 
 
+# ==============================================================================
+# Briefing Items Endpoints
+# ==============================================================================
+
+@app.route("/api/briefing/items", methods=["POST"])
+def create_briefing_item() -> Any:
+    """
+    Create a custom briefing item.
+
+    Request body (JSON):
+    - content: str (required) - The item text
+    - priority: int (optional, default 0) - Higher = more important
+    - source: str (optional, default "manual") - Origin of the item
+    - due_at: str (optional) - ISO8601 UTC due date
+    - expires_at: str (optional) - ISO8601 UTC expiration date
+
+    Returns:
+    - 201: {"id": int, "status": "active", "created_at": str}
+    - 400: {"error": str} on validation failure
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+
+        content = data.get("content", "").strip() if isinstance(data.get("content"), str) else ""
+        if not content:
+            return jsonify({"error": "Missing required field: content"}), 400
+
+        priority = data.get("priority", 0)
+        if not isinstance(priority, int):
+            try:
+                priority = int(priority)
+            except (ValueError, TypeError):
+                return jsonify({"error": "Invalid priority: must be integer"}), 400
+
+        source = data.get("source", "manual")
+        if not isinstance(source, str):
+            return jsonify({"error": "Invalid source: must be string"}), 400
+
+        due_at = data.get("due_at")
+        expires_at = data.get("expires_at")
+
+        # Validate ISO8601 format if provided
+        for field_name, value in [("due_at", due_at), ("expires_at", expires_at)]:
+            if value is not None:
+                if not isinstance(value, str):
+                    return jsonify({"error": f"Invalid {field_name}: must be ISO8601 string"}), 400
+
+        item_id = briefing_store.add_item(
+            content=content,
+            priority=priority,
+            source=source,
+            due_at=due_at,
+            expires_at=expires_at,
+        )
+
+        item = briefing_store.get_item(item_id)
+        return jsonify({
+            "id": item_id,
+            "status": "active",
+            "created_at": item.created_at if item else _now_iso(),
+        }), 201
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Create briefing item error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to create briefing item"}), 500
+
+
+@app.route("/api/briefing/items", methods=["GET"])
+def list_briefing_items() -> Any:
+    """
+    List briefing items with optional filtering.
+
+    Query params:
+    - status: str (optional) - Filter by status ("active", "done", "dismissed")
+    - include_expired: bool (optional, default false) - Include expired items
+
+    Returns:
+    - 200: {"items": [...], "count": int, "timestamp": str}
+    """
+    try:
+        status = request.args.get("status")
+        if status and status not in ("active", "done", "dismissed"):
+            return jsonify({"error": "Invalid status: must be 'active', 'done', or 'dismissed'"}), 400
+
+        include_expired = request.args.get("include_expired", "").lower() in ("true", "1", "yes")
+
+        items = briefing_store.list_items(status=status, include_expired=include_expired)
+
+        return jsonify({
+            "items": [item.to_dict() for item in items],
+            "count": len(items),
+            "timestamp": _now_iso(),
+        })
+
+    except Exception as e:
+        logger.error(f"List briefing items error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to list briefing items"}), 500
+
+
+@app.route("/api/briefing/items/<int:item_id>/done", methods=["POST"])
+def mark_briefing_item_done(item_id: int) -> Any:
+    """
+    Mark a briefing item as done.
+
+    Returns:
+    - 200: {"id": int, "status": "done", "completed_at": str}
+    - 404: {"error": str} if item not found or already completed
+    """
+    try:
+        success = briefing_store.mark_done(item_id)
+        if not success:
+            item = briefing_store.get_item(item_id)
+            if item is None:
+                return jsonify({"error": f"Item {item_id} not found"}), 404
+            return jsonify({"error": f"Item {item_id} is not active (status: {item.status})"}), 400
+
+        item = briefing_store.get_item(item_id)
+        return jsonify({
+            "id": item_id,
+            "status": "done",
+            "completed_at": item.completed_at if item else _now_iso(),
+        })
+
+    except Exception as e:
+        logger.error(f"Mark briefing item done error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to mark item done"}), 500
+
+
+@app.route("/api/briefing/items/<int:item_id>/dismiss", methods=["POST"])
+def dismiss_briefing_item(item_id: int) -> Any:
+    """
+    Dismiss a briefing item (hide without marking done).
+
+    Returns:
+    - 200: {"id": int, "status": "dismissed", "dismissed_at": str}
+    - 404: {"error": str} if item not found or already dismissed
+    """
+    try:
+        success = briefing_store.mark_dismissed(item_id)
+        if not success:
+            item = briefing_store.get_item(item_id)
+            if item is None:
+                return jsonify({"error": f"Item {item_id} not found"}), 404
+            return jsonify({"error": f"Item {item_id} is not active (status: {item.status})"}), 400
+
+        item = briefing_store.get_item(item_id)
+        return jsonify({
+            "id": item_id,
+            "status": "dismissed",
+            "dismissed_at": item.dismissed_at if item else _now_iso(),
+        })
+
+    except Exception as e:
+        logger.error(f"Dismiss briefing item error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to dismiss item"}), 500
+
+
+# ==============================================================================
+# Reminders Endpoints (wrapping existing ReminderStore)
+# ==============================================================================
+
+@app.route("/api/reminders", methods=["POST"])
+def create_reminder() -> Any:
+    """
+    Create a new reminder.
+
+    Request body (JSON):
+    - message: str (required) - Reminder text
+    - remind_at: str (required) - ISO8601 UTC timestamp OR natural language
+    - kind: str (optional, default "REMIND") - Reminder type
+    - timezone: str (optional, default "America/New_York")
+
+    Returns:
+    - 201: {"id": int, "status": "scheduled", "remind_at": int, "message": str}
+    - 400: {"error": str} on validation failure
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+
+        message = data.get("message", "").strip() if isinstance(data.get("message"), str) else ""
+        if not message:
+            return jsonify({"error": "Missing required field: message"}), 400
+
+        remind_at_raw = data.get("remind_at")
+        if not remind_at_raw:
+            return jsonify({"error": "Missing required field: remind_at"}), 400
+
+        kind = data.get("kind", "REMIND")
+        timezone = data.get("timezone", "America/New_York")
+
+        # Parse remind_at - could be timestamp or natural language
+        remind_at_ts: Optional[int] = None
+
+        if isinstance(remind_at_raw, (int, float)):
+            remind_at_ts = int(remind_at_raw)
+        elif isinstance(remind_at_raw, str):
+            # Try ISO8601 first
+            try:
+                from datetime import datetime, timezone as tz
+                # Handle Z suffix
+                remind_at_str = remind_at_raw.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(remind_at_str)
+                remind_at_ts = int(dt.timestamp())
+            except ValueError:
+                # Try natural language parsing
+                remind_at_ts = parse_time_expression(remind_at_raw, timezone=timezone)
+
+        if remind_at_ts is None:
+            return jsonify({"error": f"Could not parse remind_at: '{remind_at_raw}'"}), 400
+
+        reminder_id = reminder_store.add_reminder(
+            kind=kind,
+            due_at=remind_at_ts,
+            message=message,
+            timezone=timezone,
+        )
+
+        return jsonify({
+            "id": reminder_id,
+            "status": "scheduled",
+            "remind_at": remind_at_ts,
+            "message": message,
+        }), 201
+
+    except Exception as e:
+        logger.error(f"Create reminder error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to create reminder"}), 500
+
+
+@app.route("/api/reminders", methods=["GET"])
+def list_reminders_endpoint() -> Any:
+    """
+    List reminders with optional filtering.
+
+    Query params:
+    - status: str (optional) - "scheduled" (pending), "sent", "canceled", or "all"
+    - limit: int (optional, default 50) - Max results
+
+    Returns:
+    - 200: {"reminders": [...], "count": int, "timestamp": str}
+    """
+    try:
+        status = request.args.get("status", "scheduled")
+        limit = min(int(request.args.get("limit", "50")), 200)
+
+        include_sent = status in ("sent", "all")
+        include_canceled = status in ("canceled", "all")
+
+        reminders = reminder_store.list_reminders(
+            include_sent=include_sent,
+            include_canceled=include_canceled,
+        )
+
+        # Additional filtering for specific statuses
+        if status == "sent":
+            reminders = [r for r in reminders if r.sent_at is not None]
+        elif status == "canceled":
+            reminders = [r for r in reminders if r.canceled_at is not None]
+        elif status == "scheduled":
+            reminders = [r for r in reminders if r.sent_at is None and r.canceled_at is None]
+
+        reminders = reminders[:limit]
+
+        return jsonify({
+            "reminders": [
+                {
+                    "id": r.id,
+                    "kind": r.kind,
+                    "message": r.message,
+                    "remind_at": r.due_at,
+                    "created_at": r.created_at,
+                    "sent_at": r.sent_at,
+                    "canceled_at": r.canceled_at,
+                    "timezone": r.timezone,
+                    "status": "sent" if r.sent_at else ("canceled" if r.canceled_at else "scheduled"),
+                }
+                for r in reminders
+            ],
+            "count": len(reminders),
+            "timestamp": _now_iso(),
+        })
+
+    except Exception as e:
+        logger.error(f"List reminders error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to list reminders"}), 500
+
+
+@app.route("/api/reminders/<int:reminder_id>/cancel", methods=["POST"])
+def cancel_reminder(reminder_id: int) -> Any:
+    """
+    Cancel a scheduled reminder.
+
+    Returns:
+    - 200: {"id": int, "status": "canceled", "canceled_at": int}
+    - 404: {"error": str} if reminder not found or already sent/canceled
+    """
+    try:
+        success = reminder_store.cancel_reminder(reminder_id)
+        if not success:
+            reminder = reminder_store.get_reminder(reminder_id)
+            if reminder is None:
+                return jsonify({"error": f"Reminder {reminder_id} not found"}), 404
+            if reminder.sent_at:
+                return jsonify({"error": f"Reminder {reminder_id} already sent"}), 400
+            if reminder.canceled_at:
+                return jsonify({"error": f"Reminder {reminder_id} already canceled"}), 400
+            return jsonify({"error": f"Could not cancel reminder {reminder_id}"}), 400
+
+        reminder = reminder_store.get_reminder(reminder_id)
+        return jsonify({
+            "id": reminder_id,
+            "status": "canceled",
+            "canceled_at": reminder.canceled_at if reminder else int(time.time()),
+        })
+
+    except Exception as e:
+        logger.error(f"Cancel reminder error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to cancel reminder"}), 500
+
+
 if __name__ == "__main__":
     logger.info("Starting Milton API server at http://localhost:8001")
     logger.info("SECURITY WARNING: This server is for local development only")
     logger.info("Do NOT expose to public internet without authentication")
-    app.run(host="localhost", port=8001, debug=True, use_reloader=False)
+    # Bind to 0.0.0.0 to allow access from other machines (e.g., via Tailscale)
+    # SECURITY: Only expose on trusted networks
+    app.run(host="0.0.0.0", port=8001, debug=True, use_reloader=False)

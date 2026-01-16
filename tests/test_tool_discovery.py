@@ -139,9 +139,10 @@ class TestToolDiscovery:
             
             assert found is None
     
-    def test_find_quantize_no_llama_cpp_dir(self):
+    def test_find_quantize_no_llama_cpp_dir(self, monkeypatch):
         """Test behavior when llama_cpp_dir is not set."""
-        mc = ModelCompression()
+        monkeypatch.delenv("LLAMA_CPP_DIR", raising=False)
+        mc = ModelCompression(llama_cpp_dir=None)
         found = mc._find_quantize_binary()
         
         assert found is None

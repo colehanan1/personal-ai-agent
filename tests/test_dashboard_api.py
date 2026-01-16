@@ -147,22 +147,25 @@ def test_reminders_endpoint_not_available(client):
         assert data["count"] == 0
 
 
-def test_reminders_endpoint_with_limit(client):
+def test_reminders_endpoint_with_limit(client, temp_state_dir):
     """Test /api/reminders endpoint with limit parameter."""
-    mock_reminders = [
-        {"id": "rem-001", "title": "Test reminder 1", "due_at": "2026-01-03T10:00:00Z", "priority": "high", "tags": [], "created_at": "2026-01-01T00:00:00Z"},
-        {"id": "rem-002", "title": "Test reminder 2", "due_at": "2026-01-04T12:00:00Z", "priority": "medium", "tags": [], "created_at": "2026-01-01T00:00:00Z"},
-        {"id": "rem-003", "title": "Test reminder 3", "due_at": "2026-01-05T14:00:00Z", "priority": "low", "tags": [], "created_at": "2026-01-01T00:00:00Z"},
-    ]
+    import time
+    import scripts.start_api_server as server_module
+    from milton_orchestrator.reminders import ReminderStore
 
-    # Create fake milton_reminders module
-    fake_cli_module = MagicMock()
-    fake_cli_module.list_reminders = MagicMock(return_value=mock_reminders)
+    # Create test reminder store
+    test_store = ReminderStore(temp_state_dir / "reminders.sqlite3")
+    original_store = server_module.reminder_store
 
-    fake_reminders_module = MagicMock()
-    fake_reminders_module.cli = fake_cli_module
+    try:
+        server_module.reminder_store = test_store
 
-    with patch.dict('sys.modules', {'milton_reminders': fake_reminders_module, 'milton_reminders.cli': fake_cli_module}):
+        # Create 3 reminders
+        future_ts = int(time.time()) + 3600
+        test_store.add_reminder("REMIND", future_ts, "Reminder 1")
+        test_store.add_reminder("REMIND", future_ts + 100, "Reminder 2")
+        test_store.add_reminder("REMIND", future_ts + 200, "Reminder 3")
+
         response = client.get("/api/reminders?limit=2")
 
         assert response.status_code == 200
@@ -170,7 +173,9 @@ def test_reminders_endpoint_with_limit(client):
 
         assert data["count"] == 2
         assert len(data["reminders"]) == 2
-        assert data["reminders"][0]["id"] == "rem-001"
+    finally:
+        server_module.reminder_store = original_store
+        test_store.close()
 
 
 def test_outputs_endpoint_empty(client, temp_state_dir):
