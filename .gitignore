@@ -101,3 +101,15 @@ Thumbs.db
 
 # Note: /adapters/ is NOT ignored - trained adapters are valuable artifacts
 # that should be version controlled for provenance tracking
+
+# OS / AppleDouble
+.DS_Store
+._*
+
+# Python
+__pycache__/
+*.pyc
+
+# Transient agent outputs
+REPORT.md
+FIX_PLAN.json

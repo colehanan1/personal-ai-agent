@@ -22,6 +22,11 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: Optional[int] = Field(default=None, ge=1)
     stream: bool = False
     user: Optional[str] = None
+    conversation_id: Optional[str] = None
+    chat_id: Optional[str] = None
+    thread_id: Optional[str] = None
+    session_id: Optional[str] = None
+    client_id: Optional[str] = None
     # Additional params Open WebUI might send (ignored but accepted)
     top_p: Optional[float] = None
     frequency_penalty: Optional[float] = None
