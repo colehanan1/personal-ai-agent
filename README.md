@@ -514,6 +514,7 @@ Milton includes 71+ test files covering unit tests, integration tests, and end-t
 | FRONTIER Tests | `test_frontier.py` | Research discovery |
 | Memory Tests | `test_memory_*.py` | CRUD, compression, retrieval |
 | Reminders Tests | `test_reminders.py` | Scheduling and notifications |
+| Briefing Tests | `test_briefing_*.py` | Persistence, API endpoints |
 | Orchestrator Tests | `test_orchestrator_*.py` | Workflows |
 | Prompting Tests | `test_prompting_*.py` | Pipeline and CoVe |
 | Dashboard Tests | `test_dashboard_api.py` | API endpoints |
@@ -523,6 +524,9 @@ Milton includes 71+ test files covering unit tests, integration tests, and end-t
 ```bash
 # Quick validation
 python tests/test_phase2.py
+
+# Briefing persistence verification (standalone script)
+bash scripts/test_briefing_persistence.sh
 
 # Integration tests (opt-in; network/external services)
 pytest -q -m "not integration"
