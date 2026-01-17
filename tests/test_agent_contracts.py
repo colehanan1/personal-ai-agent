@@ -500,6 +500,7 @@ def test_validate_contract():
 # =============================================================================
 
 
+@pytest.mark.integration(reason="CORTEX initialization is slow; opt-in only.")
 def test_cortex_generate_plan_returns_task_plan():
     """Test that CORTEX.generate_plan returns TaskPlan."""
     # Note: This is a signature test, not a full integration test
@@ -533,6 +534,7 @@ def test_cortex_generate_plan_returns_task_plan():
     assert isinstance(plan.steps[0], TaskStep)
 
 
+@pytest.mark.integration(reason="CORTEX job processing is slow; opt-in only.")
 def test_cortex_process_overnight_job_returns_task_result():
     """Test that CORTEX.process_overnight_job returns TaskResult."""
     from agents.cortex import CORTEX
@@ -562,6 +564,7 @@ def test_cortex_process_overnight_job_returns_task_result():
     assert result.status in (TaskStatus.COMPLETED, TaskStatus.FAILED)
 
 
+@pytest.mark.integration(reason="FRONTIER agent setup is slow; opt-in only.")
 def test_frontier_daily_discovery_returns_discovery_result(tmp_path, monkeypatch):
     """Test that FRONTIER.daily_discovery returns DiscoveryResult."""
     from agents.frontier import FRONTIER
@@ -610,6 +613,7 @@ def test_frontier_daily_discovery_returns_discovery_result(tmp_path, monkeypatch
 # =============================================================================
 
 
+@pytest.mark.integration(reason="CORTEX initialization is slow; opt-in only.")
 def test_cortex_generate_plan_accepts_string():
     """Test that CORTEX.generate_plan still accepts plain strings."""
     from agents.cortex import CORTEX
@@ -626,6 +630,7 @@ def test_cortex_generate_plan_accepts_string():
     assert isinstance(plan, TaskPlan)
 
 
+@pytest.mark.integration(reason="CORTEX initialization is slow; opt-in only.")
 def test_cortex_generate_plan_accepts_task_request():
     """Test that CORTEX.generate_plan accepts TaskRequest."""
     from agents.cortex import CORTEX

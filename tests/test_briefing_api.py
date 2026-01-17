@@ -247,6 +247,7 @@ def app_client(tmp_path, monkeypatch):
         test_reminder_store.close()
 
 
+@pytest.mark.integration(reason="API client setup is slow; opt-in only.")
 class TestBriefingItemsAPI:
     """Tests for /api/briefing/items endpoints."""
 
@@ -396,6 +397,7 @@ class TestBriefingItemsAPI:
         assert "dismissed_at" in data
 
 
+@pytest.mark.integration(reason="API client setup is slow; opt-in only.")
 class TestRemindersAPI:
     """Tests for /api/reminders endpoints."""
 
@@ -561,6 +563,7 @@ class TestRemindersAPI:
 # Integration / Persistence Tests
 # ==============================================================================
 
+@pytest.mark.integration(reason="API client setup is slow; opt-in only.")
 class TestPersistence:
     """Tests verifying data persists across operations."""
 

@@ -1,6 +1,9 @@
 import agents.nexus as nexus_module
+import pytest
 from agents.nexus import NEXUS, ContextPacket
 from memory.schema import MemoryItem
+
+pytestmark = pytest.mark.integration(reason="NEXUS initialization is slow; opt-in only.")
 
 
 def test_build_context_requires_evidence(monkeypatch):

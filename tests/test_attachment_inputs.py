@@ -16,6 +16,7 @@ def client():
     return flask_app.test_client()
 
 
+@pytest.mark.integration(reason="API server setup is slow; opt-in only.")
 def test_api_ask_attachment_goal_briefing(client, tmp_path, monkeypatch):
     from scripts import start_api_server as api_server
     from scripts.enhanced_morning_briefing import generate_morning_briefing

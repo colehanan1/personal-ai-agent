@@ -1,4 +1,7 @@
 from agents.nexus import NEXUS
+import pytest
+
+pytestmark = pytest.mark.integration(reason="NEXUS initialization is slow; opt-in only.")
 
 
 def test_route_request_tool_weather():

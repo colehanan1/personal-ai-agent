@@ -11,6 +11,8 @@ import pytest
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
+pytestmark = pytest.mark.integration(reason="API server setup is slow; opt-in only.")
+
 
 @pytest.fixture
 def app():

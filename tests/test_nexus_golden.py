@@ -1,5 +1,8 @@
 from agents.nexus import NEXUS, ContextPacket, ContextBullet
+import pytest
 from agents.tool_registry import ToolResult
+
+pytestmark = pytest.mark.integration(reason="NEXUS initialization is slow; opt-in only.")
 
 
 def _fixed_context(query: str) -> ContextPacket:

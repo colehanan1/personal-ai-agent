@@ -1,11 +1,13 @@
 """Tests for hybrid retrieval functionality."""
 
-import pytest
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
+import importlib.util
 import tempfile
 import os
+
+import pytest
 
 from memory.schema import MemoryItem
 from memory.retrieve import (
@@ -14,7 +16,10 @@ from memory.retrieve import (
     _tokenize,
     _score_item,
 )
-from memory.embeddings import is_available as embeddings_available
+
+_EMBEDDINGS_ENABLED = os.environ.get("RUN_INTEGRATION") == "1" and (
+    importlib.util.find_spec("sentence_transformers") is not None
+)
 
 
 class MockWeaviateSearchResult:
@@ -272,7 +277,10 @@ class TestHybridRetrieval:
         # Should work regardless of embeddings availability
         assert len(results) > 0
 
-    @pytest.mark.skipif(not embeddings_available(), reason="Embeddings not available")
+    @pytest.mark.skipif(
+        not _EMBEDDINGS_ENABLED,
+        reason="Embeddings tests require sentence-transformers; set RUN_INTEGRATION=1",
+    )
     def test_query_relevant_hybrid_semantic_weight_zero(self):
         """Test that semantic_weight=0.0 is equivalent to deterministic mode."""
         items = [
@@ -291,7 +299,10 @@ class TestHybridRetrieval:
 
         assert len(results) > 0
 
-    @pytest.mark.skipif(not embeddings_available(), reason="Embeddings not available")
+    @pytest.mark.skipif(
+        not _EMBEDDINGS_ENABLED,
+        reason="Embeddings tests require sentence-transformers; set RUN_INTEGRATION=1",
+    )
     def test_query_relevant_hybrid_semantic_weight_one(self):
         """Test that semantic_weight=1.0 gives pure semantic results."""
         items = [
@@ -316,7 +327,10 @@ class TestHybridRetrieval:
 
         assert len(results) > 0
 
-    @pytest.mark.skipif(not embeddings_available(), reason="Embeddings not available")
+    @pytest.mark.skipif(
+        not _EMBEDDINGS_ENABLED,
+        reason="Embeddings tests require sentence-transformers; set RUN_INTEGRATION=1",
+    )
     def test_query_relevant_hybrid_balanced_mode(self):
         """Test hybrid query with balanced weights."""
         items = [
@@ -409,7 +423,10 @@ class TestHybridRetrievalModes:
 
         assert len(results) > 0
 
-    @pytest.mark.skipif(not embeddings_available(), reason="Embeddings not available")
+    @pytest.mark.skipif(
+        not _EMBEDDINGS_ENABLED,
+        reason="Embeddings tests require sentence-transformers; set RUN_INTEGRATION=1",
+    )
     def test_mode_semantic(self):
         """Test pure semantic mode with mocked Weaviate client."""
         items = [
@@ -434,7 +451,10 @@ class TestHybridRetrievalModes:
         # AI-related item should rank higher than cooking
         assert "intelligence" in results[0].content.lower()
 
-    @pytest.mark.skipif(not embeddings_available(), reason="Embeddings not available")
+    @pytest.mark.skipif(
+        not _EMBEDDINGS_ENABLED,
+        reason="Embeddings tests require sentence-transformers; set RUN_INTEGRATION=1",
+    )
     def test_mode_hybrid_default(self):
         """Test hybrid mode (default) with mocked Weaviate client."""
         items = [

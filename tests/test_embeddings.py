@@ -1,10 +1,11 @@
 """Tests for semantic embeddings module."""
 
-import pytest
 import numpy as np
 from pathlib import Path
 import tempfile
 import os
+
+import pytest
 
 from memory.embeddings import (
     embed,
@@ -15,6 +16,13 @@ from memory.embeddings import (
     get_cache_stats,
     EMBEDDING_DIM,
 )
+
+
+if os.environ.get("RUN_INTEGRATION") != "1":
+    pytest.skip(
+        "Embeddings tests require sentence-transformers model; set RUN_INTEGRATION=1",
+        allow_module_level=True,
+    )
 
 
 class TestEmbeddingAvailability:
