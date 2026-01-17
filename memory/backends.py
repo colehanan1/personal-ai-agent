@@ -253,6 +253,21 @@ class JsonlBackend:
 class WeaviateBackend:
     def __init__(self, client: Any):
         self.client = client
+        self._owns_client = False  # Track if we should close the client
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - close client if we own it."""
+        if self._owns_client and self.client:
+            self.client.close()
+
+    def close(self):
+        """Explicitly close the client if we own it."""
+        if self._owns_client and self.client:
+            self.client.close()
 
     def append_short_term(self, item: MemoryItem) -> str:
         collection = self.client.collections.get("ShortTermMemory")
@@ -409,6 +424,8 @@ def get_backend(
         if weaviate is None:
             logger.warning("Weaviate client not installed; falling back to JSONL.")
             return JsonlBackend(root)
-        return WeaviateBackend(get_client())
+        backend = WeaviateBackend(get_client())
+        backend._owns_client = True  # Mark that this backend should close the client
+        return backend
 
     return JsonlBackend(root)

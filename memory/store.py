@@ -28,13 +28,20 @@ def add_memory(
     """
     if not isinstance(item, MemoryItem):
         item = MemoryItem.model_validate(item)
+    
+    created_backend = backend is None
     backend = backend or get_backend(repo_root=repo_root)
-    memory_id = backend.append_short_term(item)
     
-    # Extract entities/edges and populate KG (async, best-effort)
-    _enrich_knowledge_graph(item, memory_id)
-    
-    return memory_id
+    try:
+        memory_id = backend.append_short_term(item)
+        
+        # Extract entities/edges and populate KG (async, best-effort)
+        _enrich_knowledge_graph(item, memory_id)
+        
+        return memory_id
+    finally:
+        if created_backend and hasattr(backend, 'close'):
+            backend.close()
 
 
 def _enrich_knowledge_graph(item: MemoryItem, memory_id: str) -> None:
@@ -162,11 +169,17 @@ def get_user_profile(
     *, repo_root: Optional[Path] = None, backend: Optional[Any] = None
 ) -> UserProfile:
     """Return the latest user profile, or an empty profile."""
+    created_backend = backend is None
     backend = backend or get_backend(repo_root=repo_root)
-    profile = backend.get_user_profile()
-    if profile is None:
-        profile = UserProfile()
-    return profile
+    
+    try:
+        profile = backend.get_user_profile()
+        if profile is None:
+            profile = UserProfile()
+        return profile
+    finally:
+        if created_backend and hasattr(backend, 'close'):
+            backend.close()
 
 
 def upsert_user_profile(
@@ -176,28 +189,34 @@ def upsert_user_profile(
     if not evidence_ids:
         raise ValueError("evidence_ids must be provided for profile updates")
 
+    created_backend = backend is None
     backend = backend or get_backend(repo_root=repo_root)
-    base = backend.get_user_profile() or UserProfile()
+    
+    try:
+        base = backend.get_user_profile() or UserProfile()
 
-    allowed = {"preferences", "stable_facts", "do_not_assume"}
-    unknown = set(patch) - allowed
-    if unknown:
-        raise ValueError(f"Unsupported profile fields: {sorted(unknown)}")
+        allowed = {"preferences", "stable_facts", "do_not_assume"}
+        unknown = set(patch) - allowed
+        if unknown:
+            raise ValueError(f"Unsupported profile fields: {sorted(unknown)}")
 
-    def _as_list(value: Any) -> list[str]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return [str(item) for item in value]
-        return [str(value)]
+        def _as_list(value: Any) -> list[str]:
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return [str(item) for item in value]
+            return [str(value)]
 
-    updates = {key: _as_list(patch.get(key)) for key in allowed}
+        updates = {key: _as_list(patch.get(key)) for key in allowed}
 
-    merged = UserProfile(
-        preferences=base.preferences + updates["preferences"],
-        stable_facts=base.stable_facts + updates["stable_facts"],
-        do_not_assume=base.do_not_assume + updates["do_not_assume"],
-        last_updated=_now_utc(),
-        evidence_ids=base.evidence_ids + evidence_ids,
-    )
-    return backend.upsert_user_profile(merged)
+        merged = UserProfile(
+            preferences=base.preferences + updates["preferences"],
+            stable_facts=base.stable_facts + updates["stable_facts"],
+            do_not_assume=base.do_not_assume + updates["do_not_assume"],
+            last_updated=_now_utc(),
+            evidence_ids=base.evidence_ids + evidence_ids,
+        )
+        return backend.upsert_user_profile(merged)
+    finally:
+        if created_backend and hasattr(backend, 'close'):
+            backend.close()

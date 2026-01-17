@@ -86,20 +86,26 @@ def query_relevant(
     if not text.strip():
         return []
 
+    created_backend = backend is None
     backend = backend or get_backend(repo_root=repo_root)
-    items = backend.list_short_term()
-    query_tokens = _tokenize(text)
-    now = _now_utc()
+    
+    try:
+        items = backend.list_short_term()
+        query_tokens = _tokenize(text)
+        now = _now_utc()
 
-    scored = [
-        (item, _score_item(item, query_tokens, recency_bias, now)) for item in items
-    ]
-    scored.sort(
-        key=lambda entry: (entry[1], entry[0].importance, entry[0].ts, entry[0].id),
-        reverse=True,
-    )
+        scored = [
+            (item, _score_item(item, query_tokens, recency_bias, now)) for item in items
+        ]
+        scored.sort(
+            key=lambda entry: (entry[1], entry[0].importance, entry[0].ts, entry[0].id),
+            reverse=True,
+        )
 
-    return [item for item, _score in scored[:limit]]
+        return [item for item, _score in scored[:limit]]
+    finally:
+        if created_backend and hasattr(backend, 'close'):
+            backend.close()
 
 
 def query_relevant_hybrid(

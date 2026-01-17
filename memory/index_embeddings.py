@@ -177,7 +177,6 @@ def index_embeddings(
         logger.error(f"Indexing failed: {e}", exc_info=True)
         print(f"❌ Indexing failed: {e}")
         return (0, 0)
-
     finally:
         client.close()
 
