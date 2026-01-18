@@ -32,10 +32,9 @@ def test_vllm():
         model_id = data.get('data', [{}])[0].get('id')
         print(f"  ✓ vLLM is UP")
         print(f"  ✓ Model loaded: {model_id}")
-        return True
     except Exception as e:
         print(f"  ✗ vLLM FAILED: {e}")
-        return False
+        assert False, str(e)
 
 def test_weaviate():
     """Test 2: Weaviate vector database"""
@@ -48,10 +47,9 @@ def test_weaviate():
         version = data.get('version', 'unknown')
         print(f"  ✓ Weaviate is UP")
         print(f"  ✓ Version: {version}")
-        return True
     except Exception as e:
         print(f"  ✗ Weaviate FAILED: {e}")
-        return False
+        assert False, str(e)
 
 def test_agent_imports():
     """Test 3: Agent import verification"""
@@ -74,7 +72,7 @@ def test_agent_imports():
             print(f"  ✗ {name} import FAILED: {e}")
             results.append(False)
 
-    return all(results)
+    assert all(results), f"{sum(not r for r in results)} agent import(s) failed"
 
 def test_agent_initialization():
     """Test 4: Agent initialization"""
@@ -108,7 +106,7 @@ def test_agent_initialization():
         print(f"  ✗ FRONTIER initialization FAILED: {e}")
         results.append(False)
 
-    return all(results)
+    assert all(results), f"{sum(not r for r in results)} agent initialization(s) failed"
 
 def test_directories():
     """Test 5: Required directories exist"""
@@ -136,7 +134,7 @@ def test_directories():
             print(f"    Created: {dir_path}")
             results.append(True)
 
-    return all(results)
+    assert all(results), "Directory structure check failed"
 
 def test_config():
     """Test 6: Configuration files"""
@@ -165,7 +163,7 @@ def test_config():
         print(f"  ✗ .env file not found")
         results.append(False)
 
-    return all(results)
+    assert all(results), f"Configuration check failed: {sum(not r for r in results)} issue(s)"
 
 def main():
     print("="*70)

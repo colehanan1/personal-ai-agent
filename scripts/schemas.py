@@ -1,5 +1,5 @@
 # schemas.py
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 def morning_briefing_payload(
@@ -9,7 +9,7 @@ def morning_briefing_payload(
     return {
         "type": "BRIEFING",
         "agent": "NEXUS",
-        "ts": datetime.utcnow().isoformat() + "Z",
+        "ts": datetime.now(timezone.utc).isoformat() + "Z",
         "summary": "Morning brief: weather + papers.",
         "details": [
             {

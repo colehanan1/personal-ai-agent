@@ -38,7 +38,7 @@ def print_test(name: str, status: str, details: str = ""):
     test_results.append({"name": name, "status": status, "details": details})
 
 
-def test_vllm_connectivity() -> bool:
+def test_vllm_connectivity():
     """Test vLLM server connectivity."""
     try:
         import requests
@@ -56,28 +56,27 @@ def test_vllm_connectivity() -> bool:
 
         if response.status_code == 200:
             print_test("vLLM Server Connectivity", "pass", "Server responding")
-            return True
         else:
             print_test(
                 "vLLM Server Connectivity",
                 "fail",
                 f"Server returned status {response.status_code}",
             )
-            return False
+            assert False, f"Server returned status {response.status_code}"
 
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as e:
         print_test(
             "vLLM Server Connectivity",
             "fail",
             "Server not running (start with: python scripts/start_vllm.py)",
         )
-        return False
+        assert False, f"Server not running: {e}"
     except Exception as e:
         print_test("vLLM Server Connectivity", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_vllm_inference() -> bool:
+def test_vllm_inference():
     """Test vLLM inference speed."""
     try:
         import requests
@@ -113,17 +112,16 @@ def test_vllm_inference() -> bool:
                 "pass",
                 f"{tokens_per_sec:.1f} tokens/sec, {elapsed:.2f}s response time",
             )
-            return True
         else:
             print_test("vLLM Inference", "fail", f"Status {response.status_code}")
-            return False
+            assert False, f"Status {response.status_code}"
 
     except Exception as e:
         print_test("vLLM Inference", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_weaviate_connectivity() -> bool:
+def test_weaviate_connectivity():
     """Test Weaviate connectivity."""
     try:
         import requests
@@ -133,10 +131,9 @@ def test_weaviate_connectivity() -> bool:
 
         if response.status_code == 200:
             print_test("Weaviate Connectivity", "pass", "Database ready")
-            return True
         else:
             print_test("Weaviate Connectivity", "fail", "Database not ready")
-            return False
+            assert False, "Database not ready"
 
     except Exception as e:
         print_test(
@@ -144,10 +141,10 @@ def test_weaviate_connectivity() -> bool:
             "fail",
             f"{str(e)} (start with: docker-compose up -d)",
         )
-        return False
+        assert False, str(e)
 
 
-def test_weaviate_schema() -> bool:
+def test_weaviate_schema():
     """Test Weaviate schema initialization."""
     try:
         from memory.init_db import create_schema, get_client
@@ -165,17 +162,16 @@ def test_weaviate_schema() -> bool:
             print_test(
                 "Weaviate Schema", "pass", f"{len(existing)} collections initialized"
             )
-            return True
         else:
             print_test("Weaviate Schema", "fail", f"Only {len(existing)}/3 collections")
-            return False
+            assert False, f"Only {len(existing)}/3 collections"
 
     except Exception as e:
         print_test("Weaviate Schema", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_memory_operations() -> bool:
+def test_memory_operations():
     """Test memory CRUD operations."""
     try:
         from memory.operations import MemoryOperations
@@ -197,17 +193,16 @@ def test_memory_operations() -> bool:
                     "pass",
                     f"Insert and retrieve successful ({len(recent)} entries)",
                 )
-                return True
             else:
                 print_test("Memory Operations", "fail", "No entries retrieved")
-                return False
+                assert False, "No entries retrieved"
 
     except Exception as e:
         print_test("Memory Operations", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_home_assistant() -> bool:
+def test_home_assistant():
     """Test Home Assistant integration."""
     try:
         from integrations import HomeAssistantAPI
@@ -220,24 +215,23 @@ def test_home_assistant() -> bool:
                 "fail",
                 "Not configured (set HOME_ASSISTANT_URL and HOME_ASSISTANT_TOKEN)",
             )
-            return False
+            assert False, "Not configured (set HOME_ASSISTANT_URL and HOME_ASSISTANT_TOKEN)"
 
         # Try to get states
         states = ha.get_all_states()
 
         if isinstance(states, list):
             print_test("Home Assistant", "pass", f"Connected ({len(states)} entities)")
-            return True
         else:
             print_test("Home Assistant", "fail", "Invalid response")
-            return False
+            assert False, "Invalid response"
 
     except Exception as e:
         print_test("Home Assistant", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_weather_api() -> bool:
+def test_weather_api():
     """Test Weather API integration."""
     try:
         from integrations import WeatherAPI
@@ -250,7 +244,7 @@ def test_weather_api() -> bool:
                 "fail",
                 "Not configured (Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility.)",
             )
-            return False
+            assert False, "Not configured (Use OPENWEATHER_API_KEY; WEATHER_API_KEY is supported for backward compatibility.)"
 
         # Get current weather
         current = weather.current_weather()
@@ -261,17 +255,16 @@ def test_weather_api() -> bool:
                 "pass",
                 f"{current['temp']}°F {current['location']}, {current['condition']}",
             )
-            return True
         else:
             print_test("Weather API", "fail", "Invalid response")
-            return False
+            assert False, "Invalid response"
 
     except Exception as e:
         print_test("Weather API", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_arxiv_api() -> bool:
+def test_arxiv_api():
     """Test arXiv API integration."""
     try:
         from integrations import ArxivAPI
@@ -283,17 +276,16 @@ def test_arxiv_api() -> bool:
 
         if len(papers) > 0:
             print_test("arXiv API", "pass", f"{len(papers)} papers found")
-            return True
         else:
             print_test("arXiv API", "fail", "No papers found")
-            return False
+            assert False, "No papers found"
 
     except Exception as e:
         print_test("arXiv API", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_news_api() -> bool:
+def test_news_api():
     """Test News API integration."""
     try:
         from integrations import NewsAPI
@@ -302,24 +294,23 @@ def test_news_api() -> bool:
 
         if not news.api_key:
             print_test("News API", "fail", "Not configured (set NEWS_API_KEY)")
-            return False
+            assert False, "Not configured (set NEWS_API_KEY)"
 
         # Get top headlines
         headlines = news.get_top_headlines(category="technology", max_results=5)
 
         if len(headlines) > 0:
             print_test("News API", "pass", f"{len(headlines)} articles retrieved")
-            return True
         else:
             print_test("News API", "fail", "No articles found")
-            return False
+            assert False, "No articles found"
 
     except Exception as e:
         print_test("News API", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_job_queue() -> bool:
+def test_job_queue():
     """Test job queue system."""
     try:
         from job_queue import JobManager
@@ -342,17 +333,16 @@ def test_job_queue() -> bool:
 
         if len(jobs) > 0:
             print_test("Job Queue", "pass", f"{len(jobs)} job(s) scheduled")
-            return True
         else:
             print_test("Job Queue", "fail", "No jobs in queue")
-            return False
+            assert False, "No jobs in queue"
 
     except Exception as e:
         print_test("Job Queue", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
-def test_logging() -> bool:
+def test_logging():
     """Test logging system."""
     try:
         from agent_logging import setup_logging
@@ -367,14 +357,13 @@ def test_logging() -> bool:
 
         if os.path.exists(log_dir):
             print_test("Logging System", "pass", f"Log directory: {log_dir}")
-            return True
         else:
             print_test("Logging System", "fail", "Log directory not created")
-            return False
+            assert False, "Log directory not created"
 
     except Exception as e:
         print_test("Logging System", "fail", str(e))
-        return False
+        assert False, str(e)
 
 
 def print_summary():

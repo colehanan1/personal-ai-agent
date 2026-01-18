@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 import subprocess
 
@@ -34,7 +34,7 @@ def check_vllm():
                 "port": 8000,
                 "status": "UP",
                 "model": model,
-                "last_check": datetime.utcnow().isoformat() + "Z",
+                "last_check": datetime.now(timezone.utc).isoformat() + "Z",
                 "issues": []
             }
         else:
@@ -99,7 +99,7 @@ def check_logs():
 
 def main():
     status = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         "system_root": str(ROOT_DIR),
         "components": {
             "inference": check_vllm(),

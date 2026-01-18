@@ -103,7 +103,8 @@ AGENT_MAP = {
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    from datetime import timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _make_request_id() -> str:
