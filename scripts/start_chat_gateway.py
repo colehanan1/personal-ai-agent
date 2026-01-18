@@ -41,10 +41,33 @@ Example curl commands:
 
 import logging
 import os
+import socket
 import sys
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def check_port_available(host: str, port: int) -> bool:
+    """Check if a port is available for binding.
+    
+    Args:
+        host: Host address to check
+        port: Port number to check
+        
+    Returns:
+        True if port is available, False if already in use
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    try:
+        sock.bind((host, port))
+        sock.close()
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
 
 
 def main():
@@ -76,6 +99,23 @@ def main():
     config = get_config()
     host = config["host"]
     port = config["port"]
+
+    # Check if port is already in use
+    if not check_port_available(host, port):
+        logger.error("=" * 60)
+        logger.error(f"ERROR: Port {port} is already in use")
+        logger.error("=" * 60)
+        logger.error("")
+        logger.error("The gateway may already be running, or another service is using this port.")
+        logger.error("")
+        logger.error("To find what's using the port:")
+        logger.error(f"  lsof -iTCP:{port} -sTCP:LISTEN -n -P")
+        logger.error("")
+        logger.error("To use a different port, set environment variable:")
+        logger.error("  export MILTON_CHAT_PORT=8082")
+        logger.error(f"  python {sys.argv[0]}")
+        logger.error("")
+        sys.exit(1)
 
     logger.info("=" * 60)
     logger.info("Milton Chat Gateway")
