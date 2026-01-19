@@ -2,17 +2,30 @@
 
 Prevents duplicate processing of the same ntfy message, even across restarts.
 Uses a simple SQLite database to track processed message IDs.
+
+Environment Variables:
+    MILTON_NTFY_DEBUG: Set to "1" or "true" to enable verbose idempotency logging
 """
 
 import hashlib
 import json
 import logging
+import os
 import sqlite3
 import time
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Debug mode controlled by environment variable
+DEBUG_MODE = os.getenv("MILTON_NTFY_DEBUG", "").lower() in ("1", "true", "yes")
+
+
+def _debug(msg: str):
+    """Log debug message if debug mode is enabled."""
+    if DEBUG_MODE:
+        logger.info(f"[NTFY_DEBUG] {msg}")
 
 
 class IdempotencyTracker:
@@ -52,6 +65,7 @@ class IdempotencyTracker:
             conn.commit()
             
         logger.info(f"Idempotency tracker initialized: {self.db_path}")
+        _debug(f"Database path: {self.db_path}, TTL: {self.ttl_seconds}s")
 
     def make_dedupe_key(
         self,
@@ -78,7 +92,9 @@ class IdempotencyTracker:
         """
         if message_id:
             # Prefer explicit message ID from ntfy
-            return f"ntfy_msg_{message_id}"
+            key = f"ntfy_msg_{message_id}"
+            _debug(f"Dedupe key from message_id: {key}")
+            return key
 
         # Fallback: hash-based key with 5-minute bucketing
         # This handles cases where same message arrives multiple times
@@ -89,7 +105,9 @@ class IdempotencyTracker:
         content = f"{topic}:{bucket}:{message}"
         hash_val = hashlib.sha256(content.encode()).hexdigest()[:16]
         
-        return f"ntfy_hash_{hash_val}"
+        key = f"ntfy_hash_{hash_val}"
+        _debug(f"Dedupe key from hash: {key} (bucket={bucket})")
+        return key
 
     def has_processed(self, dedupe_key: str) -> bool:
         """
@@ -107,7 +125,10 @@ class IdempotencyTracker:
                 (dedupe_key,)
             )
             result = cursor.fetchone()
-            return result is not None
+            is_duplicate = result is not None
+            
+        _debug(f"Dedupe check: {dedupe_key} -> {'DUPLICATE' if is_duplicate else 'NEW'}")
+        return is_duplicate
 
     def mark_processed(
         self,
@@ -143,6 +164,7 @@ class IdempotencyTracker:
             conn.commit()
 
         logger.debug(f"Marked as processed: {dedupe_key}")
+        _debug(f"Marked processed: {dedupe_key} (message_id={message_id}, request_id={request_id})")
 
     def cleanup_old_records(self) -> int:
         """

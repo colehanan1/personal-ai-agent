@@ -66,6 +66,11 @@ class Orchestrator:
         self.config = config
         self.dry_run = dry_run
         self.request_tracker = RequestTracker()
+        
+        # Initialize idempotency tracker for duplicate prevention
+        from .idempotency import IdempotencyTracker
+        idempotency_db = config.state_dir / "idempotency.sqlite3"
+        self.idempotency = IdempotencyTracker(idempotency_db)
 
         # Initialize clients
         self.ntfy_client = NtfyClient(config.ntfy_base_url)
@@ -536,6 +541,17 @@ class Orchestrator:
     def process_chat_request(self, request_id: str, content: str):
         """Process a CHAT request (no Perplexity, no code execution)."""
         logger.info(f"Processing CHAT request {request_id}")
+        
+        # Idempotency check: prevent duplicate LLM calls for same request
+        llm_dedupe_key = f"{request_id}_llm_gen"
+        if self.request_tracker.is_processed(llm_dedupe_key):
+            logger.info(f"Skipping duplicate CHAT request: {request_id}")
+            self.publish_status(
+                f"[{request_id}] Already processed (duplicate)",
+                title="Duplicate Request"
+            )
+            return
+        
         self.publish_status(
             f"[{request_id}] Chatting...", title="Chat Request"
         )
@@ -545,6 +561,30 @@ class Orchestrator:
         else:
             try:
                 response_text = self._run_chat_llm(content)
+                
+                # Validation: detect runaway generation
+                if len(response_text) > 20000:
+                    logger.warning(
+                        f"CHAT request {request_id} generated excessive output: "
+                        f"{len(response_text)} chars (possible runaway)"
+                    )
+                    response_text = (
+                        response_text[:20000] + 
+                        "\n\n[Output truncated: exceeded safe limit. "
+                        "Possible runaway generation detected.]"
+                    )
+                
+                # Validation: detect token repetition loops
+                if self._detect_token_loop(response_text):
+                    logger.error(
+                        f"CHAT request {request_id} contains repetition loop"
+                    )
+                    response_text = (
+                        "[Error: Repetition loop detected in response. "
+                        "This may indicate a model configuration issue.]\n\n" +
+                        response_text[:1000]
+                    )
+                    
             except Exception as exc:
                 logger.error(
                     "Chat LLM failed for request %s: %s",
@@ -558,6 +598,9 @@ class Orchestrator:
                 )
                 return
 
+        # Mark as processed before publishing (idempotency)
+        self.request_tracker.mark_processed(llm_dedupe_key)
+
         title = self._output_title(request_id, "Chat", success=True)
         publish_response(
             self.ntfy_client,
@@ -569,6 +612,42 @@ class Orchestrator:
             force_file=True,
             mode_tag="chat",
         )
+
+    @staticmethod
+    def _detect_token_loop(text: str, threshold: int = 10) -> bool:
+        """
+        Detect if text contains excessive token repetition (runaway loop).
+        
+        Args:
+            text: Text to check
+            threshold: Max allowed consecutive occurrences of same token
+            
+        Returns:
+            True if loop detected, False otherwise
+        """
+        # Check for "assistant" token repetition
+        if text.count("assistant") > threshold:
+            return True
+        
+        # Check for short repeating patterns
+        words = text.lower().split()
+        if len(words) < 20:
+            return False
+            
+        # Look for same word repeated >threshold times consecutively
+        prev_word = None
+        count = 1
+        for word in words:
+            if word == prev_word:
+                count += 1
+                if count > threshold:  # Changed from >= to >
+                    return True
+            else:
+                count = 1
+                prev_word = word
+        
+        return False
+
 
     @staticmethod
     def _run_chat_llm(content: str) -> str:
@@ -585,11 +664,23 @@ class Orchestrator:
         )
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         max_tokens = int(os.getenv("MILTON_CHAT_MAX_TOKENS", "4000"))
+        
+        # CRITICAL: Add stop sequences to prevent runaway token generation
+        # These stop sequences prevent the model from repeating "assistant" token
+        # or continuing past natural end-of-turn markers
+        stop_sequences = [
+            "assistant",  # Prevent "assistant" token repetition
+            "</s>",       # Standard EOS token
+            "<|eot_id|>", # Llama 3.1 end-of-turn
+            "\n\nassistant",  # Double newline + assistant
+        ]
+        
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": max_tokens,
             "temperature": 0.7,
+            "stop": stop_sequences,  # ← FIX: Add stop sequences
         }
         response = requests.post(
             f"{base_url}/v1/chat/completions",
@@ -795,6 +886,26 @@ class Orchestrator:
         message: str,
         raw_data: Optional[dict[str, object]] = None,
     ):
+        # Idempotency check: prevent duplicate processing of same ntfy message
+        dedupe_key = self.idempotency.make_dedupe_key(
+            message_id=message_id,
+            topic=topic,
+            message=message,
+            timestamp=raw_data.get("time") if raw_data else None,
+        )
+        
+        if self.idempotency.has_processed(dedupe_key):
+            logger.info(
+                f"Skipping duplicate message: message_id={message_id}, "
+                f"dedupe_key={dedupe_key}"
+            )
+            # Still send ack to ntfy, but don't reprocess
+            self.publish_status(
+                f"Message already processed (duplicate delivery)",
+                title="Duplicate Message"
+            )
+            return
+        
         normalized = normalize_incoming_input(message, raw_data=raw_data)
         request_id = self.generate_request_id(message_id, normalized.semantic_input)
         mode, payload, reminder_kind = self.route_message(topic, normalized.semantic_input)
@@ -824,10 +935,11 @@ class Orchestrator:
             len(normalized.attachments),
         )
         logger.info(
-            "Routing decision: mode=%s input_type=%s length=%d",
+            "Routing decision: mode=%s input_type=%s length=%d dedupe_key=%s",
             mode,
             normalized.input_type,
             normalized.normalized_length,
+            dedupe_key,
         )
         logger.info(
             "Memory capture: ran=%s ids=%s",
@@ -847,6 +959,15 @@ class Orchestrator:
         self.publish_status(
             f"[{request_id}] Mode: {mode}{memory_note}",
             title="Request Acknowledged",
+        )
+        
+        # Mark message as processed BEFORE executing (prevents race conditions)
+        self.idempotency.mark_processed(
+            dedupe_key=dedupe_key,
+            message_id=message_id,
+            topic=topic,
+            request_id=request_id,
+            message=message,
         )
 
         if mode == "CLAUDE_CODE":
