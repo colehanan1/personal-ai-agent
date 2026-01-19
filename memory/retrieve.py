@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Any, Literal
 import re
 import logging
+from contextlib import contextmanager
 
 from .backends import get_backend
 from .schema import MemoryItem
@@ -17,6 +18,20 @@ logger = logging.getLogger(__name__)
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+@contextmanager
+def _weaviate_client():
+    """Context manager for Weaviate client lifecycle; ensures deterministic close."""
+    client = get_client()
+    try:
+        yield client
+    finally:
+        try:
+            client.close()
+        except Exception:
+            # Silently ignore close errors to avoid masking original exceptions
+            pass
 
 
 def _now_utc() -> datetime:
@@ -152,123 +167,127 @@ def query_relevant_hybrid(
     if not text.strip():
         return []
 
+    created_backend = backend is None
     backend = backend or get_backend(repo_root=repo_root)
-    items = backend.list_short_term()
 
-    if not items:
-        return []
-
-    # Determine effective mode based on embeddings availability
-    effective_mode = mode
-    if mode in ("hybrid", "semantic"):
-        if not embeddings_available():
-            logger.warning(
-                "Embeddings not available, falling back to deterministic mode. "
-                "Install sentence-transformers for semantic search."
-            )
-            effective_mode = "deterministic"
-
-    # Pure deterministic mode
-    if effective_mode == "deterministic":
-        return query_relevant(
-            text,
-            limit=limit,
-            recency_bias=recency_bias,
-            repo_root=repo_root,
-            backend=backend,
-        )
-
-    # Semantic or hybrid mode - need embeddings
-    query_vector = embed(text)
-    if query_vector is None:
-        logger.warning("Failed to generate query embedding, falling back to deterministic mode")
-        return query_relevant(
-            text,
-            limit=limit,
-            recency_bias=recency_bias,
-            repo_root=repo_root,
-            backend=backend,
-        )
-
-    # Query Weaviate for semantic similarity
     try:
-        client = get_client()
-        collection = client.collections.get("ShortTermMemory")
+        items = backend.list_short_term()
 
-        # Perform vector search
-        search_results = collection.query.near_vector(
-            near_vector=query_vector.tolist(),
-            limit=max(limit * 3, 100),  # Get more candidates for reranking
-            return_metadata=["distance"]
-        )
+        if not items:
+            return []
 
-        # Build mapping from UUID to semantic similarity
-        semantic_scores = {}
-        for result in search_results.objects:
-            # Convert cosine distance to similarity (1 - distance)
-            # Weaviate returns distance in [0, 2] range for cosine
-            distance = result.metadata.distance if result.metadata.distance is not None else 1.0
-            similarity = max(0.0, 1.0 - (distance / 2.0))
-            semantic_scores[str(result.uuid)] = similarity
+        # Determine effective mode based on embeddings availability
+        effective_mode = mode
+        if mode in ("hybrid", "semantic"):
+            if not embeddings_available():
+                logger.warning(
+                    "Embeddings not available, falling back to deterministic mode. "
+                    "Install sentence-transformers for semantic search."
+                )
+                effective_mode = "deterministic"
 
-        client.close()
+        # Pure deterministic mode
+        if effective_mode == "deterministic":
+            return query_relevant(
+                text,
+                limit=limit,
+                recency_bias=recency_bias,
+                repo_root=repo_root,
+                backend=backend,
+            )
 
-    except Exception as e:
-        logger.error(f"Semantic search failed: {e}", exc_info=True)
-        logger.warning("Falling back to deterministic mode")
-        return query_relevant(
-            text,
-            limit=limit,
-            recency_bias=recency_bias,
-            repo_root=repo_root,
-            backend=backend,
-        )
+        # Semantic or hybrid mode - need embeddings
+        query_vector = embed(text)
+        if query_vector is None:
+            logger.warning("Failed to generate query embedding, falling back to deterministic mode")
+            return query_relevant(
+                text,
+                limit=limit,
+                recency_bias=recency_bias,
+                repo_root=repo_root,
+                backend=backend,
+            )
 
-    # Pure semantic mode
-    if effective_mode == "semantic":
-        # Sort items by semantic similarity only
+        # Query Weaviate for semantic similarity
+        try:
+            with _weaviate_client() as client:
+                collection = client.collections.get("ShortTermMemory")
+
+                # Perform vector search
+                search_results = collection.query.near_vector(
+                    near_vector=query_vector.tolist(),
+                    limit=max(limit * 3, 100),  # Get more candidates for reranking
+                    return_metadata=["distance"]
+                )
+
+                # Build mapping from UUID to semantic similarity
+                semantic_scores = {}
+                for result in search_results.objects:
+                    # Convert cosine distance to similarity (1 - distance)
+                    # Weaviate returns distance in [0, 2] range for cosine
+                    distance = result.metadata.distance if result.metadata.distance is not None else 1.0
+                    similarity = max(0.0, 1.0 - (distance / 2.0))
+                    semantic_scores[str(result.uuid)] = similarity
+
+        except Exception as e:
+            logger.error(f"Semantic search failed: {e}", exc_info=True)
+            logger.warning("Falling back to deterministic mode")
+            return query_relevant(
+                text,
+                limit=limit,
+                recency_bias=recency_bias,
+                repo_root=repo_root,
+                backend=backend,
+            )
+
+        # Pure semantic mode
+        if effective_mode == "semantic":
+            # Sort items by semantic similarity only
+            scored = []
+            for item in items:
+                semantic_score = semantic_scores.get(item.id, 0.0)
+                if semantic_score > 0.0:  # Only include items with semantic match
+                    scored.append((item, semantic_score))
+
+            scored.sort(key=lambda entry: entry[1], reverse=True)
+            return [item for item, _score in scored[:limit]]
+
+        # Hybrid mode - combine deterministic and semantic scores
+        query_tokens = _tokenize(text)
+        now = _now_utc()
+
+        # Compute deterministic scores for all items
+        deterministic_scores = {}
+        for item in items:
+            deterministic_scores[item.id] = _score_item(item, query_tokens, recency_bias, now)
+
+        # Normalize scores to [0, 1] range for fair combination
+        max_det_score = max(deterministic_scores.values()) if deterministic_scores else 1.0
+        max_sem_score = max(semantic_scores.values()) if semantic_scores else 1.0
+
+        # Avoid division by zero
+        max_det_score = max(max_det_score, 0.001)
+        max_sem_score = max(max_sem_score, 0.001)
+
+        # Combine scores
         scored = []
         for item in items:
-            semantic_score = semantic_scores.get(item.id, 0.0)
-            if semantic_score > 0.0:  # Only include items with semantic match
-                scored.append((item, semantic_score))
+            det_score = deterministic_scores.get(item.id, 0.0) / max_det_score
+            sem_score = semantic_scores.get(item.id, 0.0) / max_sem_score
 
-        scored.sort(key=lambda entry: entry[1], reverse=True)
-        return [item for item, _score in scored[:limit]]
+            # Weighted combination
+            weight = max(0.0, min(semantic_weight, 1.0))
+            combined_score = (det_score * (1.0 - weight)) + (sem_score * weight)
 
-    # Hybrid mode - combine deterministic and semantic scores
-    query_tokens = _tokenize(text)
-    now = _now_utc()
+            scored.append((item, combined_score, det_score, sem_score))
 
-    # Compute deterministic scores for all items
-    deterministic_scores = {}
-    for item in items:
-        deterministic_scores[item.id] = _score_item(item, query_tokens, recency_bias, now)
+        # Sort by combined score, then importance, then timestamp
+        scored.sort(
+            key=lambda entry: (entry[1], entry[0].importance, entry[0].ts, entry[0].id),
+            reverse=True,
+        )
 
-    # Normalize scores to [0, 1] range for fair combination
-    max_det_score = max(deterministic_scores.values()) if deterministic_scores else 1.0
-    max_sem_score = max(semantic_scores.values()) if semantic_scores else 1.0
-
-    # Avoid division by zero
-    max_det_score = max(max_det_score, 0.001)
-    max_sem_score = max(max_sem_score, 0.001)
-
-    # Combine scores
-    scored = []
-    for item in items:
-        det_score = deterministic_scores.get(item.id, 0.0) / max_det_score
-        sem_score = semantic_scores.get(item.id, 0.0) / max_sem_score
-
-        # Weighted combination
-        weight = max(0.0, min(semantic_weight, 1.0))
-        combined_score = (det_score * (1.0 - weight)) + (sem_score * weight)
-
-        scored.append((item, combined_score, det_score, sem_score))
-
-    # Sort by combined score, then importance, then timestamp
-    scored.sort(
-        key=lambda entry: (entry[1], entry[0].importance, entry[0].ts, entry[0].id),
-        reverse=True,
-    )
-
-    return [item for item, _combined, _det, _sem in scored[:limit]]
+        return [item for item, _combined, _det, _sem in scored[:limit]]
+    finally:
+        if created_backend and hasattr(backend, 'close'):
+            backend.close()
