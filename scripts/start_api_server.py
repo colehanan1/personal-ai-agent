@@ -702,6 +702,20 @@ def health() -> Any:
     })
 
 
+@app.route("/config", methods=["GET"])
+def effective_config() -> Any:
+    """
+    Effective configuration endpoint (read-only, no auth required).
+
+    Returns the resolved configuration that this API server is using,
+    including state directory, service endpoints, and memory backend.
+    This ensures all Milton entrypoints use the same "brain".
+    """
+    from milton_orchestrator.effective_config import get_effective_config
+    config = get_effective_config()
+    return jsonify(config.to_dict())
+
+
 @app.route("/api/queue", methods=["GET"])
 def queue_status() -> Any:
     """
@@ -1203,9 +1217,11 @@ def cancel_reminder(reminder_id: int) -> Any:
 
 
 if __name__ == "__main__":
-    logger.info("Starting Milton API server at http://localhost:8001")
+    # Allow port to be configured via environment variable
+    api_port = int(os.getenv("MILTON_API_PORT", "8001"))
+    logger.info(f"Starting Milton API server at http://localhost:{api_port}")
     logger.info("SECURITY WARNING: This server is for local development only")
     logger.info("Do NOT expose to public internet without authentication")
     # Bind to 0.0.0.0 to allow access from other machines (e.g., via Tailscale)
     # SECURITY: Only expose on trusted networks
-    app.run(host="0.0.0.0", port=8001, debug=True, use_reloader=False)
+    app.run(host="0.0.0.0", port=api_port, debug=True, use_reloader=False)

@@ -198,8 +198,8 @@ def get_memory_store():
     global _memory_store
     if _memory_store is None:
         from storage.chat_memory import ChatMemoryStore
-        state_dir = os.getenv("STATE_DIR") or os.getenv("MILTON_STATE_DIR") or Path.home() / ".local" / "state" / "milton"
-        state_dir = Path(state_dir)
+        from milton_orchestrator.state_paths import resolve_state_dir
+        state_dir = resolve_state_dir()
         db_path = state_dir / "chat_memory.sqlite3"
         _memory_store = ChatMemoryStore(db_path)
         logger.info(f"Initialized chat memory store at {db_path}")
