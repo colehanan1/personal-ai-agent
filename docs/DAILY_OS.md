@@ -57,6 +57,28 @@ python scripts/enhanced_morning_briefing.py
 
 Both scripts write Markdown to `STATE_DIR/inbox/` (default: `~/.local/state/milton/inbox/`) and store a summary memory item with the briefing path as provenance.
 
+### Verify Goals in Morning Briefing
+
+Check current goals in state directory:
+
+```bash
+python -c "from goals.api import list_goals; import json; print(json.dumps(list_goals('daily'), indent=2))"
+```
+
+Generate morning briefing and verify goals section:
+
+```bash
+python scripts/enhanced_morning_briefing.py
+# Find the generated file (default: ~/.local/state/milton/inbox/morning/YYYY-MM-DD.md)
+rg -n "Goals" ~/.local/state/milton/inbox/morning/$(date +%Y-%m-%d)*.md
+```
+
+Run hermetic tests to verify goals integration:
+
+```bash
+pytest tests/test_morning_briefing_goals.py -v
+```
+
 ## Systemd Timers (User)
 
 Unit files live in `systemd/`. Install with:
