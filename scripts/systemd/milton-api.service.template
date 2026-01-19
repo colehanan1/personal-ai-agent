@@ -1,0 +1,25 @@
+[Unit]
+Description=Milton API Server
+Documentation=https://github.com/cole-hanan/milton
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory={{MILTON_REPO_DIR}}
+EnvironmentFile={{MILTON_REPO_DIR}}/scripts/milton.env
+
+# Python executable will be substituted by milton_up.sh
+ExecStart={{PYTHON_EXECUTABLE}} {{MILTON_REPO_DIR}}/scripts/start_api_server.py
+
+# Logging
+StandardOutput=append:{{MILTON_STATE_DIR}}/logs/milton-api.log
+StandardError=append:{{MILTON_STATE_DIR}}/logs/milton-api.log
+
+# Restart policy
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

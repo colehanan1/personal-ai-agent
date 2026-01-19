@@ -2,6 +2,8 @@
 
 Milton's daily operating loop captures goals, queues overnight jobs, and generates briefings.
 
+**See also**: [RUNTIME.md](RUNTIME.md) for starting/stopping Milton services and smoke tests.
+
 ## Goals
 
 Goals live in `goals/current/{daily,weekly,monthly}.yaml` and are managed via `goals/api.py`:
