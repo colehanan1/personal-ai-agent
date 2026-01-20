@@ -220,6 +220,49 @@ def _load_custom_items(state_dir: Path, now: datetime, max_items: int = 10) -> t
         return [], f"store error: {str(exc)[:50]}"
 
 
+def _load_recent_context(state_dir: Path, hours: int = 8) -> list[dict[str, Any]]:
+    """Load recent activity snapshots from last N hours.
+    
+    Args:
+        state_dir: Base state directory where activity_snapshots.db resides
+        hours: Time window in hours to query (default: 8)
+    
+    Returns:
+        List of snapshot dicts, ordered newest first
+    """
+    try:
+        from milton_orchestrator.activity_snapshots import ActivitySnapshotStore
+        
+        db_path = state_dir / "activity_snapshots.db"
+        if not db_path.exists():
+            return []
+        
+        store = ActivitySnapshotStore(db_path=db_path)
+        try:
+            minutes = hours * 60
+            snapshots = store.get_recent(minutes=minutes, limit=10)
+            return [
+                {
+                    "id": snap.id,
+                    "device_id": snap.device_id,
+                    "device_type": snap.device_type,
+                    "captured_at": snap.captured_at,
+                    "active_app": snap.active_app,
+                    "window_title": snap.window_title,
+                    "project_path": snap.project_path,
+                    "git_branch": snap.git_branch,
+                    "recent_files": snap.recent_files,
+                    "notes": snap.notes,
+                }
+                for snap in snapshots
+            ]
+        finally:
+            store.close()
+    except Exception as exc:
+        logger.warning(f"Failed to load recent context: {exc}")
+        return []
+
+
 def _build_markdown(
     now: datetime,
     goals_today: list[str],
@@ -231,6 +274,7 @@ def _build_markdown(
     phd_context: Optional[dict[str, Any]] = None,
     custom_items: Optional[list[dict[str, Any]]] = None,
     custom_items_error: Optional[str] = None,
+    recent_context: Optional[list[dict[str, Any]]] = None,
 ) -> str:
     """Build markdown briefing content."""
     date_label = now.strftime("%Y-%m-%d (%A)" if phd_context else "%Y-%m-%d")
@@ -357,6 +401,44 @@ def _build_markdown(
     else:
         lines.append("- No papers found")
     lines.append("")
+    
+    # Recent Context Section (Phase 2C)
+    if recent_context and len(recent_context) > 0:
+        lines.append("## 🖥️  Recent Context")
+        lines.append("")
+        
+        # Group by device
+        from collections import defaultdict
+        by_device: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for snap in recent_context:
+            by_device[snap["device_id"]].append(snap)
+        
+        for device_id, device_snaps in by_device.items():
+            device_type = device_snaps[0]["device_type"]
+            latest_snap = device_snaps[0]  # Newest first
+            
+            # Format relative time
+            elapsed = int(now.timestamp()) - latest_snap["captured_at"]
+            if elapsed < 3600:
+                time_ago = f"{elapsed // 60}m ago"
+            else:
+                hours_ago = elapsed // 3600
+                time_ago = f"{hours_ago}h ago"
+            
+            # Build summary line
+            parts = []
+            if latest_snap.get("active_app"):
+                parts.append(f"*{latest_snap['active_app']}*")
+            if latest_snap.get("project_path"):
+                project_name = latest_snap["project_path"].split('/')[-1]
+                parts.append(f"in **{project_name}**")
+            if latest_snap.get("git_branch"):
+                parts.append(f"on `{latest_snap['git_branch']}`")
+            
+            summary = " ".join(parts) if parts else "No details"
+            lines.append(f"- **{device_id}** ({device_type}): {summary}, {time_ago}")
+        
+        lines.append("")
 
     # Next Actions
     actions_emoji = "🎯 " if phd_context else ""
@@ -524,6 +606,9 @@ def generate_morning_briefing(
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{timestamp.strftime('%Y-%m-%d')}" + ("_phd_aware.md" if phd_aware else ".md")
     output_path = output_dir / filename
+    
+    # Load recent context (Phase 2C)
+    recent_context = _load_recent_context(base, hours=overnight_hours)
 
     output_path.write_text(
         _build_markdown(
@@ -537,6 +622,7 @@ def generate_morning_briefing(
             phd_context=phd_context,
             custom_items=custom_items,
             custom_items_error=custom_items_error,
+            recent_context=recent_context,
         ),
         encoding="utf-8",
     )

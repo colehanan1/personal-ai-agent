@@ -83,6 +83,10 @@ class CommandProcessor:
         # Check for /memory command
         if content.startswith("/memory"):
             return self._handle_memory_command(content)
+        
+        # Check for /recent or /context command (Phase 2C)
+        if content.startswith("/recent") or content.startswith("/context"):
+            return self._handle_context_query(content)
 
         # Not a command
         return CommandResult(is_command=False)
@@ -597,4 +601,114 @@ class CommandProcessor:
             return CommandResult(
                 is_command=True,
                 error=f"Failed to delete memory: {e}"
+            )
+    
+    def _handle_context_query(self, content: str) -> CommandResult:
+        """Handle /recent or /context commands to query activity snapshots.
+        
+        Formats:
+        - /recent         (default: last 2 hours)
+        - /recent 30m     (last 30 minutes)
+        - /recent 4h      (last 4 hours)
+        - /context        (alias for /recent)
+        """
+        from datetime import datetime, timezone
+        from milton_orchestrator.activity_snapshots import ActivitySnapshotStore
+        from milton_orchestrator.state_paths import resolve_state_dir
+        
+        # Parse time window
+        default_minutes = 120  # 2 hours default
+        minutes = default_minutes
+        
+        # Extract time specification if present
+        parts = content.split()
+        if len(parts) > 1:
+            time_spec = parts[1].lower()
+            # Parse formats like "30m", "2h", "90m"
+            if time_spec.endswith('m'):
+                try:
+                    minutes = int(time_spec[:-1])
+                except ValueError:
+                    return CommandResult(
+                        is_command=True,
+                        error=f"Invalid time format: '{time_spec}'. Use format like '30m' or '2h'"
+                    )
+            elif time_spec.endswith('h'):
+                try:
+                    hours = int(time_spec[:-1])
+                    minutes = hours * 60
+                except ValueError:
+                    return CommandResult(
+                        is_command=True,
+                        error=f"Invalid time format: '{time_spec}'. Use format like '30m' or '2h'"
+                    )
+        
+        # Query activity snapshots
+        try:
+            state_dir = resolve_state_dir()
+            db_path = state_dir / "activity_snapshots.db"
+            store = ActivitySnapshotStore(db_path=db_path)
+            
+            try:
+                snapshots = store.get_recent(minutes=minutes, limit=10)
+                
+                if not snapshots:
+                    hours_display = minutes / 60
+                    time_window = f"{int(hours_display)}h" if hours_display >= 1 else f"{minutes}m"
+                    return CommandResult(
+                        is_command=True,
+                        response=f"No recent activity found in the last {time_window}"
+                    )
+                
+                # Format response
+                lines = [f"📋 Recent Activity (last {minutes // 60}h {minutes % 60}m):", ""]
+                
+                # Group by device
+                from collections import defaultdict
+                by_device = defaultdict(list)
+                for snap in snapshots:
+                    by_device[snap.device_id].append(snap)
+                
+                for device_id, device_snaps in by_device.items():
+                    # Get device type from first snapshot
+                    device_type = device_snaps[0].device_type
+                    lines.append(f"🖥️  **{device_id}** ({device_type})")
+                    
+                    for snap in device_snaps[:5]:  # Limit to 5 per device
+                        # Format relative time
+                        now = int(datetime.now(timezone.utc).timestamp())
+                        elapsed = now - snap.captured_at
+                        if elapsed < 3600:
+                            time_ago = f"{elapsed // 60}m ago"
+                        else:
+                            time_ago = f"{elapsed // 3600}h ago"
+                        
+                        # Build info line
+                        info_parts = []
+                        if snap.active_app:
+                            info_parts.append(f"App: {snap.active_app}")
+                        if snap.project_path:
+                            # Show just the project name, not full path
+                            project_name = snap.project_path.split('/')[-1]
+                            info_parts.append(f"Project: {project_name}")
+                        if snap.git_branch:
+                            info_parts.append(f"Branch: {snap.git_branch}")
+                        
+                        info_str = " | ".join(info_parts) if info_parts else "No details"
+                        lines.append(f"  • {time_ago}: {info_str}")
+                    
+                    if len(device_snaps) > 5:
+                        lines.append(f"  ... and {len(device_snaps) - 5} more snapshots")
+                    lines.append("")
+                
+                return CommandResult(is_command=True, response="\n".join(lines))
+                
+            finally:
+                store.close()
+                
+        except Exception as e:
+            logger.exception(f"Failed to query activity snapshots: {e}")
+            return CommandResult(
+                is_command=True,
+                error=f"Failed to query recent activity: {str(e)}"
             )
