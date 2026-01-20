@@ -36,7 +36,7 @@ from memory.init_db import create_schema, get_client
 from memory.operations import MemoryOperations
 from milton_orchestrator.state_paths import resolve_state_dir
 from milton_orchestrator.input_normalizer import normalize_incoming_input
-from milton_orchestrator.reminders import ReminderStore, parse_time_expression
+from milton_orchestrator.reminders import ReminderStore, parse_time_expression, deliver_ntfy, format_timestamp_local
 from storage.briefing_store import BriefingStore
 
 logging.basicConfig(
@@ -57,6 +57,10 @@ LLM_API_KEY = (
     or os.getenv("OLLAMA_API_KEY")
 )
 STATE_DIR = resolve_state_dir()
+NTFY_BASE_URL = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
+ANSWER_TOPIC = os.getenv("ANSWER_TOPIC", "milton-briefing-code")
+MILTON_PUBLIC_BASE_URL = os.getenv("MILTON_PUBLIC_BASE_URL")
+MILTON_ACTION_TOKEN = os.getenv("MILTON_ACTION_TOKEN")  # Optional bearer token for action callbacks
 
 # Initialize persistent stores
 briefing_store = BriefingStore(STATE_DIR / "briefing.sqlite3")
@@ -1214,6 +1218,208 @@ def cancel_reminder(reminder_id: int) -> Any:
     except Exception as e:
         logger.error(f"Cancel reminder error: {e}", exc_info=True)
         return jsonify({"error": "Failed to cancel reminder"}), 500
+
+
+@app.route("/api/reminders/<int:reminder_id>/action", methods=["POST"])
+def reminder_action(reminder_id: int) -> Any:
+    """
+    Process a reminder action from ntfy button callback.
+
+    Request body (JSON):
+    - action: str (required) - "DONE", "SNOOZE_30", or "DELAY_2H"
+    - token: str (optional) - Auth token if MILTON_ACTION_TOKEN is set
+
+    Security:
+    - If MILTON_ACTION_TOKEN env var is set, request body must include matching token
+    - If not set, endpoint is open (suitable for local/tailscale-only deployments)
+
+    Returns:
+    - 200: {"id": int, "action": str, "status": str, "due_at": int|null, "confirmation_sent": bool}
+    - 400: {"error": str} on invalid action or missing reminder
+    - 401: {"error": str} on auth failure
+    - 404: {"error": str} if reminder not found
+    - 500: {"error": str} on internal error
+    """
+    try:
+        data = request.get_json(silent=True) or {}
+        
+        # Check token if required
+        if MILTON_ACTION_TOKEN:
+            provided_token = data.get("token", "").strip()
+            if not provided_token or provided_token != MILTON_ACTION_TOKEN:
+                logger.warning(f"Action token mismatch for reminder {reminder_id}")
+                return jsonify({"error": "Unauthorized: invalid or missing token"}), 401
+        
+        action = data.get("action", "").strip().upper()
+
+        # Strict allowlist
+        if action not in {"DONE", "SNOOZE_30", "DELAY_2H"}:
+            return jsonify({"error": f"Invalid action '{action}'. Must be DONE, SNOOZE_30, or DELAY_2H"}), 400
+
+        # Get reminder
+        reminder = reminder_store.get_reminder(reminder_id)
+        if reminder is None:
+            return jsonify({"error": f"Reminder {reminder_id} not found"}), 404
+
+        # Process action
+        success = False
+        new_status = None
+        new_due_at = None
+
+        if action == "DONE":
+            success = reminder_store.acknowledge(
+                reminder_id,
+                actor="user_ntfy",
+                details="User clicked DONE button via ntfy"
+            )
+            new_status = "acknowledged"
+            confirmation_msg = "Done ✓"
+
+        elif action == "SNOOZE_30":
+            success = reminder_store.snooze(
+                reminder_id,
+                minutes=30,
+                actor="user_ntfy",
+                details="User clicked SNOOZE_30 button via ntfy"
+            )
+            new_status = "snoozed"
+            # Get updated due_at
+            updated_reminder = reminder_store.get_reminder(reminder_id)
+            new_due_at = updated_reminder.due_at if updated_reminder else None
+            due_str = format_timestamp_local(new_due_at, reminder.timezone) if new_due_at else "unknown"
+            confirmation_msg = f"Snoozed 30 minutes\nNew time: {due_str}"
+
+        elif action == "DELAY_2H":
+            success = reminder_store.snooze(
+                reminder_id,
+                minutes=120,
+                actor="user_ntfy",
+                details="User clicked DELAY_2H button via ntfy"
+            )
+            new_status = "snoozed"
+            # Get updated due_at
+            updated_reminder = reminder_store.get_reminder(reminder_id)
+            new_due_at = updated_reminder.due_at if updated_reminder else None
+            due_str = format_timestamp_local(new_due_at, reminder.timezone) if new_due_at else "unknown"
+            confirmation_msg = f"Delayed 2 hours\nNew time: {due_str}"
+
+        if not success:
+            return jsonify({"error": f"Failed to process action {action} for reminder {reminder_id}"}), 400
+
+        # Log action callback in audit log
+        reminder_store.append_audit_log(reminder_id, [{
+            "ts": int(time.time()),
+            "action": "action_callback",
+            "actor": "user_ntfy",
+            "details": f"Processed {action} action via ntfy callback",
+            "metadata": {"action": action, "status": new_status},
+        }])
+
+        # Send confirmation notification via ntfy
+        confirmation_sent = False
+        try:
+            # Create a simple confirmation reminder object (we just need the message)
+            # We'll use deliver_ntfy but without action buttons for the confirmation
+            confirmation_title = f"Reminder {reminder_id}: {action}"
+
+            # Use requests directly for confirmation (simpler than deliver_ntfy)
+            response = requests.post(
+                f"{NTFY_BASE_URL}/{ANSWER_TOPIC}",
+                data=confirmation_msg.encode("utf-8"),
+                headers={
+                    "Title": confirmation_title,
+                    "Priority": "3",
+                },
+                timeout=10,
+            )
+            confirmation_sent = response.status_code == 200
+            if not confirmation_sent:
+                logger.warning(f"Failed to send confirmation for reminder {reminder_id}: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Error sending confirmation notification: {e}", exc_info=True)
+
+        # Get final state
+        final_reminder = reminder_store.get_reminder(reminder_id)
+
+        return jsonify({
+            "id": reminder_id,
+            "action": action,
+            "status": new_status,
+            "due_at": new_due_at,
+            "confirmation_sent": confirmation_sent,
+            "message": final_reminder.message if final_reminder else None,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Reminder action error: {e}", exc_info=True)
+        return jsonify({"error": "Failed to process reminder action"}), 500
+
+
+@app.route("/api/reminders/health", methods=["GET"])
+def reminder_health() -> Any:
+    """
+    Get health status of reminder system.
+    
+    Returns:
+    - 200: {
+        "status": "ok" | "degraded",
+        "scheduler": {
+            "last_heartbeat": int | null (unix timestamp),
+            "heartbeat_age_sec": int | null (seconds since last heartbeat),
+            "is_alive": bool (heartbeat within last 60 seconds)
+        },
+        "reminders": {
+            "scheduled_count": int,
+            "next_due_at": int | null (unix timestamp of next reminder),
+            "next_due_in_sec": int | null (seconds until next reminder)
+        },
+        "delivery": {
+            "last_success": int | null (unix timestamp of last successful ntfy delivery),
+            "last_error": str | null (most recent error message)
+        },
+        "timestamp": int (current server time)
+    }
+    """
+    try:
+        stats = reminder_store.get_health_stats()
+        now_ts = int(time.time())
+        
+        # Determine overall status
+        heartbeat_ok = (
+            stats["last_scheduler_heartbeat"] is not None
+            and stats["heartbeat_age_sec"] is not None
+            and stats["heartbeat_age_sec"] < 60
+        )
+        
+        status = "ok" if heartbeat_ok else "degraded"
+        
+        # Calculate time until next reminder
+        next_due_in_sec = None
+        if stats["next_due_at"]:
+            next_due_in_sec = stats["next_due_at"] - now_ts
+        
+        return jsonify({
+            "status": status,
+            "scheduler": {
+                "last_heartbeat": stats["last_scheduler_heartbeat"],
+                "heartbeat_age_sec": stats["heartbeat_age_sec"],
+                "is_alive": heartbeat_ok,
+            },
+            "reminders": {
+                "scheduled_count": stats["scheduled_count"],
+                "next_due_at": stats["next_due_at"],
+                "next_due_in_sec": next_due_in_sec,
+            },
+            "delivery": {
+                "last_success": stats["last_ntfy_ok"],
+                "last_error": stats["last_error"],
+            },
+            "timestamp": now_ts,
+        }), 200
+    
+    except Exception as e:
+        logger.error(f"Reminder health check error: {e}", exc_info=True)
+        return jsonify({"error": "Health check failed", "status": "error"}), 500
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Phase 0 enum constants
-REMINDER_CHANNELS = frozenset({"ntfy", "voice", "both"})
+REMINDER_CHANNELS = frozenset({"ntfy", "voice", "both", "desktop_popup"})
 REMINDER_PRIORITIES = frozenset({"low", "med", "high"})
 REMINDER_STATUSES = frozenset({"scheduled", "fired", "acknowledged", "snoozed", "canceled"})
 REMINDER_ACTIONS = frozenset({"DONE", "SNOOZE_30", "DELAY_2H", "EDIT_TIME"})
@@ -55,9 +55,84 @@ def _deserialize_list(data: Optional[str]) -> list:
         return []
 
 
+def _parse_channels(channel_data: Optional[str]) -> list[str]:
+    """Parse channel data from DB into list of channel names.
+    
+    Supports:
+    - JSON list: '["ntfy","voice"]' -> ["ntfy", "voice"]
+    - Single string (legacy): "ntfy" -> ["ntfy"]
+    - "both" (legacy): -> ["ntfy", "voice"]
+    - Empty/None: -> ["ntfy"] (default)
+    
+    Returns normalized list with duplicates removed.
+    """
+    if not channel_data:
+        return ["ntfy"]
+    
+    # Try parsing as JSON list first
+    try:
+        parsed = json.loads(channel_data)
+        if isinstance(parsed, list):
+            # Validate all entries are strings
+            channels = [str(c) for c in parsed if c]
+            if not channels:
+                return ["ntfy"]
+            # Expand "both" if present
+            expanded = []
+            for ch in channels:
+                if ch == "both":
+                    expanded.extend(["ntfy", "voice"])
+                else:
+                    expanded.append(ch)
+            # Remove duplicates while preserving order
+            seen = set()
+            result = []
+            for ch in expanded:
+                if ch not in seen:
+                    seen.add(ch)
+                    result.append(ch)
+            return result
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    
+    # Legacy single string
+    channel_str = str(channel_data).strip()
+    if channel_str == "both":
+        return ["ntfy", "voice"]
+    elif channel_str:
+        return [channel_str]
+    else:
+        return ["ntfy"]
+
+
+def _serialize_channels(channels: list[str]) -> str:
+    """Serialize channel list to JSON string for DB storage."""
+    if not channels:
+        channels = ["ntfy"]
+    # Remove duplicates and "both" (expand instead)
+    expanded = []
+    for ch in channels:
+        if ch == "both":
+            expanded.extend(["ntfy", "voice"])
+        else:
+            expanded.append(ch)
+    # Deduplicate
+    seen = set()
+    unique = []
+    for ch in expanded:
+        if ch not in seen:
+            seen.add(ch)
+            unique.append(ch)
+    return json.dumps(unique)
+
+
 @dataclass
 class Reminder:
-    """Stored reminder record with Phase 0 enhancements."""
+    """Stored reminder record with Phase 0 enhancements and multi-channel support.
+    
+    Note: The 'channel' field is kept for DB backward compatibility but stored as
+    a JSON list. Use 'channels' property to access the parsed list.
+    """
 
     id: int
     kind: str
@@ -70,7 +145,7 @@ class Reminder:
     delivery_target: Optional[str] = None
     last_error: Optional[str] = None
     # Phase 0 fields
-    channel: str = "ntfy"
+    channel: str = "ntfy"  # Stored as JSON list in DB, parsed to channels property
     priority: str = "med"
     status: str = "scheduled"
     actions: list = field(default_factory=lambda: list(DEFAULT_ACTIONS))
@@ -79,11 +154,15 @@ class Reminder:
     audit_log: list = field(default_factory=list)
     # Phase 2C field
     context_ref: Optional[str] = None
+    
+    # Cached channels list (populated by __post_init__)
+    _channels: Optional[list[str]] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self):
-        """Validate enum fields."""
-        if self.channel not in REMINDER_CHANNELS:
-            raise ValueError(f"Invalid channel '{self.channel}', must be one of {sorted(REMINDER_CHANNELS)}")
+        """Validate enum fields and parse channels."""
+        # Parse channels from the DB string
+        self._channels = _parse_channels(self.channel)
+        
         if self.priority not in REMINDER_PRIORITIES:
             raise ValueError(f"Invalid priority '{self.priority}', must be one of {sorted(REMINDER_PRIORITIES)}")
         if self.status not in REMINDER_STATUSES:
@@ -95,6 +174,16 @@ class Reminder:
         for action in self.actions:
             if action not in REMINDER_ACTIONS:
                 raise ValueError(f"Invalid action '{action}', must be one of {sorted(REMINDER_ACTIONS)}")
+    
+    @property
+    def channels(self) -> list[str]:
+        """Get parsed list of channels.
+        
+        Returns list like ["ntfy", "voice"] based on the channel field.
+        """
+        if self._channels is None:
+            self._channels = _parse_channels(self.channel)
+        return self._channels
 
 
 @dataclass
@@ -217,6 +306,38 @@ class ReminderStore:
                 self._conn.execute(
                     "ALTER TABLE reminders ADD COLUMN context_ref TEXT"
                 )
+            
+            # Multi-channel migration: convert old single-string channel values to JSON lists
+            logger.info("Migrating channel field to JSON list format (if needed)")
+            cursor = self._conn.execute("SELECT id, channel FROM reminders WHERE channel IS NOT NULL")
+            rows_to_update = []
+            for row in cursor.fetchall():
+                channel_val = row["channel"]
+                # Check if it's already a JSON list
+                try:
+                    parsed = json.loads(channel_val)
+                    if isinstance(parsed, list):
+                        # Already migrated
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                # Need to convert: single string -> JSON list
+                new_val = _serialize_channels(_parse_channels(channel_val))
+                rows_to_update.append((new_val, row["id"]))
+            
+            if rows_to_update:
+                logger.info(f"Converting {len(rows_to_update)} channel values to JSON list format")
+                for new_channel, rid in rows_to_update:
+                    self._conn.execute(
+                        "UPDATE reminders SET channel = ? WHERE id = ?",
+                        (new_channel, rid),
+                    )
+            
+            # Ensure no NULL channels (set default)
+            self._conn.execute(
+                """UPDATE reminders SET channel = ? WHERE channel IS NULL OR channel = ''""",
+                (_serialize_channels(["ntfy"]),),
+            )
 
     def add_reminder(
         self,
@@ -227,7 +348,8 @@ class ReminderStore:
         timezone: str = "America/New_York",
         delivery_target: Optional[str] = None,
         # Phase 0 parameters
-        channel: str = "ntfy",
+        channel: Optional[str] = None,  # Legacy: single string or "both"
+        channels: Optional[list[str]] = None,  # New: list of channels
         priority: str = "med",
         actions: Optional[list] = None,
         source: str = "other",
@@ -238,9 +360,21 @@ class ReminderStore:
         if actions is None:
             actions = list(DEFAULT_ACTIONS)
 
-        # Validate enum fields
-        if channel not in REMINDER_CHANNELS:
-            raise ValueError(f"Invalid channel '{channel}'")
+        # Resolve channels (prefer new list format, fall back to legacy string)
+        if channels is not None:
+            # Use provided list
+            resolved_channels = channels
+        elif channel is not None:
+            # Parse legacy single string
+            resolved_channels = _parse_channels(channel)
+        else:
+            # Default
+            resolved_channels = ["ntfy"]
+        
+        # Serialize channels for storage
+        channel_json = _serialize_channels(resolved_channels)
+
+        # Validate enum fields (check against legacy set for backward compat)
         if priority not in REMINDER_PRIORITIES:
             raise ValueError(f"Invalid priority '{priority}'")
         if source not in REMINDER_SOURCES:
@@ -264,7 +398,7 @@ class ReminderStore:
                     channel, priority, status, actions, source, updated_at, audit_log, context_ref)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (kind, message, due_at, created_at, timezone, delivery_target,
-                 channel, priority, "scheduled", _serialize_list(actions),
+                 channel_json, priority, "scheduled", _serialize_list(actions),
                  source, created_at, _serialize_list(audit_log), context_ref),
             )
             return int(cursor.lastrowid)
@@ -532,6 +666,42 @@ class ReminderStore:
             actor=actor,
             details=details or "User acknowledged reminder",
         )
+    
+    def append_audit_log(
+        self,
+        reminder_id: int,
+        entries: list[dict],
+    ) -> bool:
+        """Append audit log entries to a reminder.
+        
+        Args:
+            reminder_id: Reminder ID
+            entries: List of audit entry dicts with ts, action, actor, details keys
+            
+        Returns:
+            True if successful, False if reminder not found
+        """
+        now_ts = int(time.time())
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT audit_log FROM reminders WHERE id = ?",
+                (reminder_id,),
+            ).fetchone()
+            if not row:
+                return False
+            
+            audit_log = _deserialize_list(row["audit_log"])
+            audit_log.extend(entries)
+            
+            # Keep last 100 entries to prevent unbounded growth
+            if len(audit_log) > 100:
+                audit_log = audit_log[-100:]
+            
+            self._conn.execute(
+                "UPDATE reminders SET audit_log = ?, updated_at = ? WHERE id = ?",
+                (_serialize_list(audit_log), now_ts, reminder_id),
+            )
+            return True
 
     def close(self) -> None:
         with self._lock:
@@ -646,19 +816,32 @@ class ReminderStore:
 
 
 class ReminderScheduler(threading.Thread):
-    """Background scheduler that dispatches reminders when due with retry logic."""
+    """Background scheduler that dispatches reminders when due with multi-channel support."""
 
     def __init__(
         self,
         store: ReminderStore,
-        publish_fn: Callable[[str, str, int], bool],  # message, title, reminder_id -> success
+        notification_router=None,  # NotificationRouter from notifications.py
+        publish_fn: Optional[Callable[[str, str, int], bool]] = None,  # Legacy fallback
         interval_seconds: int = 5,
         now_fn: Optional[Callable[[], int]] = None,
         max_retries: int = 3,
         retry_backoff: int = 60,
     ):
+        """Initialize reminder scheduler.
+        
+        Args:
+            store: ReminderStore instance
+            notification_router: NotificationRouter for multi-channel delivery (preferred)
+            publish_fn: Legacy single-channel publish function (fallback)
+            interval_seconds: Polling interval in seconds
+            now_fn: Override current time (for testing)
+            max_retries: Max delivery retries (currently unused)
+            retry_backoff: Backoff between retries (currently unused)
+        """
         super().__init__(daemon=True)
         self.store = store
+        self.notification_router = notification_router
         self.publish_fn = publish_fn
         self.interval_seconds = interval_seconds
         self.now_fn = now_fn or (lambda: int(time.time()))
@@ -699,32 +882,93 @@ class ReminderScheduler(threading.Thread):
 
         # Try to deliver each claimed reminder
         for reminder in claimed:
-            message = reminder.message
-            title = f"Milton Reminder ({reminder.kind})"
+            self._deliver_reminder(reminder, now_ts)
 
+    def _deliver_reminder(self, reminder, now_ts: int) -> None:
+        """Deliver a single reminder through all configured channels."""
+        message = reminder.message
+        title = f"Milton Reminder ({reminder.kind})"
+        
+        # Use notification router if available (multi-channel)
+        if self.notification_router:
+            try:
+                results = self.notification_router.send_all(
+                    reminder,
+                    reminder.channels,
+                    title=title,
+                    body=message,
+                )
+                
+                # Record delivery results in audit log
+                any_success = any(r.ok for r in results)
+                audit_entries = []
+                
+                for result in results:
+                    audit_entries.append({
+                        "ts": result.timestamp,
+                        "action": "delivery_attempt",
+                        "actor": "scheduler",
+                        "details": f"Channel {result.provider}: {'success' if result.ok else 'failed'}",
+                        "metadata": result.to_dict(),
+                    })
+                
+                # Append audit entries to reminder
+                self.store.append_audit_log(reminder.id, audit_entries)
+                
+                if any_success:
+                    logger.info(f"Delivered reminder {reminder.id} via {sum(r.ok for r in results)}/{len(results)} channels")
+                    self.store.set_metadata("last_ntfy_ok", str(now_ts))
+                else:
+                    error = f"All channels failed: {', '.join(r.provider + ': ' + (r.error or 'unknown') for r in results)}"
+                    logger.error(f"Reminder {reminder.id} delivery failed: {error}")
+                    self.store.mark_error(reminder.id, error[:500])
+                    
+            except Exception as exc:
+                error = f"Router exception: {str(exc)[:200]}"
+                logger.error(f"Reminder {reminder.id} router error: {exc}", exc_info=True)
+                self.store.mark_error(reminder.id, error)
+                self.store.append_audit_log(reminder.id, [{
+                    "ts": now_ts,
+                    "action": "delivery_exception",
+                    "actor": "scheduler",
+                    "details": error,
+                }])
+        
+        # Fallback to legacy publish_fn (single channel, for backward compatibility)
+        elif self.publish_fn:
             try:
                 success = self.publish_fn(message, title, reminder.id)
                 if success:
-                    logger.info(
-                        f"Delivered reminder {reminder.id}: {message[:50]}..."
-                    )
-                    # Record successful ntfy delivery
+                    logger.info(f"Delivered reminder {reminder.id}: {message[:50]}...")
                     self.store.set_metadata("last_ntfy_ok", str(now_ts))
+                    self.store.append_audit_log(reminder.id, [{
+                        "ts": now_ts,
+                        "action": "delivery_attempt",
+                        "actor": "scheduler",
+                        "details": "Legacy publish_fn: success",
+                    }])
                 else:
-                    # Delivery failed but reminder is already claimed (fired)
-                    # Record error but do NOT revert to scheduled
-                    # This ensures exactly-once: claimed = fired, no double-fire
-                    error = "Delivery failed (ntfy returned false)"
+                    error = "Delivery failed (legacy publish_fn returned false)"
                     logger.error(f"Reminder {reminder.id} delivery failed: {error}")
                     self.store.mark_error(reminder.id, error)
+                    self.store.append_audit_log(reminder.id, [{
+                        "ts": now_ts,
+                        "action": "delivery_attempt",
+                        "actor": "scheduler",
+                        "details": "Legacy publish_fn: failed",
+                    }])
             except Exception as exc:
-                # Exception during delivery, record error
-                # Reminder stays in fired state (exactly-once semantics)
                 error = f"Exception: {str(exc)[:200]}"
-                logger.error(
-                    f"Reminder {reminder.id} delivery exception: {exc}", exc_info=True
-                )
+                logger.error(f"Reminder {reminder.id} delivery exception: {exc}", exc_info=True)
                 self.store.mark_error(reminder.id, error)
+                self.store.append_audit_log(reminder.id, [{
+                    "ts": now_ts,
+                    "action": "delivery_exception",
+                    "actor": "scheduler",
+                    "details": error,
+                }])
+        else:
+            logger.error(f"No delivery method configured for reminder {reminder.id}")
 
     def stop(self) -> None:
         self._stop_event.set()
