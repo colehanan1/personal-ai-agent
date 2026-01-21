@@ -147,8 +147,8 @@ Actions: {action_labels}"""
                     action_body_dict["token"] = self.action_token
                 
                 action_body = json.dumps(action_body_dict)
-                # ntfy action format: http, Label, POST, URL, body='{"key":"value"}'
-                action_parts.append(f"http, {action}, POST, {action_url}, body='{action_body}'")
+                # ntfy action format: http, Label, POST, URL, body={"key":"value"}
+                action_parts.append(f"http, {action}, POST, {action_url}, body={action_body}")
             
             headers["Actions"] = "; ".join(action_parts)
         
@@ -338,21 +338,22 @@ def create_default_router(
     action_token: Optional[str] = None,
 ) -> NotificationRouter:
     """Create a router with default providers configured from environment.
-    
+
     Args:
         ntfy_base_url: Override for NTFY_BASE_URL env var
-        ntfy_topic: Override for NTFY_TOPIC env var
+        ntfy_topic: Override for REMINDERS_NTFY_TOPIC or NTFY_TOPIC env var
         public_base_url: Override for MILTON_PUBLIC_BASE_URL env var
         action_token: Override for MILTON_ACTION_TOKEN env var
-        
+
     Returns:
         Configured NotificationRouter instance
     """
     router = NotificationRouter()
-    
+
     # Configure ntfy provider if we have required settings
     base_url = ntfy_base_url or os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
-    topic = ntfy_topic or os.getenv("NTFY_TOPIC")
+    # Prefer REMINDERS_NTFY_TOPIC for reminders, fall back to NTFY_TOPIC
+    topic = ntfy_topic or os.getenv("REMINDERS_NTFY_TOPIC") or os.getenv("NTFY_TOPIC")
     public_url = public_base_url or os.getenv("MILTON_PUBLIC_BASE_URL")
     token = action_token or os.getenv("MILTON_ACTION_TOKEN")
     

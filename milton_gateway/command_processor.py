@@ -28,14 +28,16 @@ class CommandResult:
 class CommandProcessor:
     """Process slash commands and call Milton API."""
 
-    def __init__(self, milton_api_base_url: str = "http://localhost:8001"):
+    def __init__(self, milton_api_base_url: str = "http://localhost:8001", state_dir: Optional[Path] = None):
         """Initialize command processor.
 
         Args:
             milton_api_base_url: Base URL for Milton API (default: http://localhost:8001)
+            state_dir: Optional state directory path (for testing)
         """
         self.milton_api_base_url = milton_api_base_url.rstrip("/")
         self.client = httpx.AsyncClient(timeout=10.0)
+        self.state_dir = state_dir
         
         # Initialize chat memory store (lazy loaded)
         self._memory_store = None
@@ -87,6 +89,10 @@ class CommandProcessor:
         # Check for /recent or /context command (Phase 2C)
         if content.startswith("/recent") or content.startswith("/context"):
             return self._handle_context_query(content)
+
+        # Check for /goal command
+        if content.startswith("/goal"):
+            return self._handle_goal_command(content)
 
         # Not a command
         return CommandResult(is_command=False)
@@ -645,7 +651,11 @@ class CommandProcessor:
         
         # Query activity snapshots
         try:
-            state_dir = resolve_state_dir()
+            # Use provided state_dir or resolve from environment
+            if self.state_dir:
+                state_dir = self.state_dir
+            else:
+                state_dir = resolve_state_dir()
             db_path = state_dir / "activity_snapshots.db"
             store = ActivitySnapshotStore(db_path=db_path)
             
@@ -712,3 +722,130 @@ class CommandProcessor:
                 is_command=True,
                 error=f"Failed to query recent activity: {str(e)}"
             )
+
+    def _handle_goal_command(self, content: str) -> CommandResult:
+        """Handle /goal commands for tracking daily/weekly/monthly goals.
+
+        Supported formats:
+        - /goal add <text>              (daily goal, default)
+        - /goal add <text> | weekly     (weekly goal)
+        - /goal add <text> | monthly    (monthly goal)
+        - /goal list                    (list daily goals)
+        - /goal list weekly             (list weekly goals)
+        - /goal list monthly            (list monthly goals)
+        """
+        from goals.capture import capture_goal, normalize_goal_text
+        from goals.api import list_goals
+        from milton_orchestrator.state_paths import resolve_state_dir
+
+        # Remove /goal prefix
+        command = content[5:].strip()
+
+        # Default to showing help if no subcommand
+        if not command:
+            return CommandResult(
+                is_command=True,
+                response=(
+                    "🎯 **Goal Commands:**\n\n"
+                    "**Add goals:**\n"
+                    "  `/goal add <text>` - Add daily goal\n"
+                    "  `/goal add <text> | weekly` - Add weekly goal\n"
+                    "  `/goal add <text> | monthly` - Add monthly goal\n\n"
+                    "**List goals:**\n"
+                    "  `/goal list` - Show daily goals\n"
+                    "  `/goal list weekly` - Show weekly goals\n"
+                    "  `/goal list monthly` - Show monthly goals"
+                )
+            )
+
+        # List command
+        if command == "list" or command.startswith("list "):
+            scope = "daily"
+            if "weekly" in command:
+                scope = "weekly"
+            elif "monthly" in command:
+                scope = "monthly"
+
+            try:
+                base_dir = resolve_state_dir()
+                goals = list_goals(scope, base_dir=base_dir)
+
+                if not goals:
+                    return CommandResult(
+                        is_command=True,
+                        response=f"📋 No {scope} goals set yet.\n\nAdd one with: `/goal add <your goal>`"
+                    )
+
+                scope_emoji = {"daily": "📅", "weekly": "📆", "monthly": "🗓️"}.get(scope, "🎯")
+                lines = [f"{scope_emoji} **{scope.title()} Goals** ({len(goals)}):"]
+                for i, goal in enumerate(goals, 1):
+                    text = goal.get("text", "")
+                    status = goal.get("status", "active")
+                    status_icon = "✅" if status == "completed" else "⬜"
+                    lines.append(f"  {status_icon} {i}. {text}")
+
+                return CommandResult(is_command=True, response="\n".join(lines))
+
+            except Exception as e:
+                logger.exception(f"Failed to list goals: {e}")
+                return CommandResult(is_command=True, error=f"Failed to list goals: {str(e)}")
+
+        # Add command
+        if command.startswith("add "):
+            text = command[4:].strip()
+            if not text:
+                return CommandResult(
+                    is_command=True,
+                    error="Usage: `/goal add <text>` or `/goal add <text> | weekly`"
+                )
+
+            # Parse scope from text (e.g., "my goal | weekly")
+            scope = "daily"
+            parts = text.split("|")
+            goal_text = parts[0].strip()
+
+            for part in parts[1:]:
+                part_lower = part.strip().lower()
+                if part_lower in ("weekly", "week"):
+                    scope = "weekly"
+                elif part_lower in ("monthly", "month"):
+                    scope = "monthly"
+                elif part_lower in ("daily", "day", "today"):
+                    scope = "daily"
+
+            if not goal_text:
+                return CommandResult(
+                    is_command=True,
+                    error="Goal text cannot be empty"
+                )
+
+            try:
+                result = capture_goal(
+                    goal_text,
+                    scope=scope,
+                    tags=["from-chat"],
+                    base_dir=resolve_state_dir()
+                )
+
+                scope_emoji = {"daily": "📅", "weekly": "📆", "monthly": "🗓️"}.get(scope, "🎯")
+
+                if result["status"] == "existing":
+                    return CommandResult(
+                        is_command=True,
+                        response=f"{scope_emoji} Goal already exists: **{result['text']}**\n(ID: {result['id']})"
+                    )
+                else:
+                    return CommandResult(
+                        is_command=True,
+                        response=f"✅ Added {scope} goal: **{result['text']}**\n(ID: {result['id']})"
+                    )
+
+            except Exception as e:
+                logger.exception(f"Failed to add goal: {e}")
+                return CommandResult(is_command=True, error=f"Failed to add goal: {str(e)}")
+
+        # Unknown subcommand
+        return CommandResult(
+            is_command=True,
+            error="Unknown goal command. Use: `/goal add <text>` or `/goal list`"
+        )

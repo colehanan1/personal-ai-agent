@@ -16,25 +16,34 @@ from .reminders import (
 )
 from .ntfy_client import NtfyClient
 from .config import Config
-from .state_paths import resolve_state_dir
+from .state_paths import resolve_state_dir, resolve_reminders_db_path
 
 logger = logging.getLogger(__name__)
 
 
 def get_db_path() -> Path:
-    """Get the database path from config or default."""
-    return resolve_state_dir() / "reminders.sqlite3"
+    """Get the canonical reminders database path.
+    
+    This uses the canonical path resolver to ensure all components
+    (API, scheduler, CLI) use the same database file.
+    """
+    return resolve_reminders_db_path()
 
 
 def get_ntfy_config() -> tuple[str, str, Optional[str]]:
-    """Get ntfy configuration from environment."""
+    """Get ntfy configuration from environment.
+
+    Checks REMINDERS_NTFY_TOPIC first (preferred for reminders),
+    then falls back to NTFY_TOPIC for backward compatibility.
+    """
     base_url = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
-    topic = os.getenv("NTFY_TOPIC")
+    # Prefer REMINDERS_NTFY_TOPIC for reminders, fall back to NTFY_TOPIC
+    topic = os.getenv("REMINDERS_NTFY_TOPIC") or os.getenv("NTFY_TOPIC")
     token = os.getenv("NTFY_TOKEN")
 
     if not topic:
-        print("Error: NTFY_TOPIC environment variable is required", file=sys.stderr)
-        print("Set it with: export NTFY_TOPIC=your-topic-name", file=sys.stderr)
+        print("Error: REMINDERS_NTFY_TOPIC or NTFY_TOPIC environment variable is required", file=sys.stderr)
+        print("Set it with: export REMINDERS_NTFY_TOPIC=your-reminders-topic", file=sys.stderr)
         sys.exit(1)
 
     return base_url, topic, token
@@ -173,6 +182,18 @@ def cmd_cancel(args: argparse.Namespace) -> None:
     store.close()
 
 
+def cmd_health(args: argparse.Namespace) -> None:
+    """Show health status of the reminder system."""
+    db_path = get_db_path()
+    store = ReminderStore(db_path)
+    
+    stats = store.get_health_stats()
+    store.close()
+    
+    # Always output JSON (machine-friendly)
+    print(json.dumps(stats))
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     """Run the reminder scheduler daemon."""
     # Set up logging
@@ -187,6 +208,8 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     logger.info("=" * 60)
     logger.info("Milton Reminders Scheduler")
+    if args.once:
+        logger.info("Mode: Single run (--once)")
     logger.info("=" * 60)
     logger.info(f"Database: {db_path}")
     logger.info(f"ntfy URL: {base_url}")
@@ -217,7 +240,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             logger.error(f"Failed to publish reminder {reminder_id}: {exc}")
             return False
 
-    # Create and start scheduler
+    # Create scheduler
     scheduler = ReminderScheduler(
         store=store,
         publish_fn=publish_fn,
@@ -225,8 +248,17 @@ def cmd_run(args: argparse.Namespace) -> None:
         max_retries=args.max_retries,
         retry_backoff=args.retry_backoff,
     )
-    scheduler.start()
 
+    if args.once:
+        # Single run mode for testing
+        logger.info("Running single check...")
+        scheduler.run_once()
+        logger.info("Single run complete.")
+        store.close()
+        return
+
+    # Continuous daemon mode
+    scheduler.start()
     logger.info("Scheduler started. Press Ctrl+C to stop.")
 
     try:
@@ -258,17 +290,21 @@ Examples:
 
   # Cancel a reminder
   milton reminders cancel 42
+  
+  # Check health status
+  milton reminders health
 
   # Run the scheduler daemon
   milton reminders run
   milton reminders run --verbose
 
 Environment Variables:
-  NTFY_BASE_URL     ntfy server URL (default: https://ntfy.sh)
-  NTFY_TOPIC        ntfy topic for notifications (REQUIRED)
-  NTFY_TOKEN        ntfy authentication token (optional)
-  STATE_DIR         Directory for database (default: ~/.local/state/milton)
-  TZ                Timezone (default: America/New_York)
+  NTFY_BASE_URL         ntfy server URL (default: https://ntfy.sh)
+  REMINDERS_NTFY_TOPIC  ntfy topic for reminder notifications (preferred)
+  NTFY_TOPIC            fallback ntfy topic if REMINDERS_NTFY_TOPIC not set
+  NTFY_TOKEN            ntfy authentication token (optional)
+  STATE_DIR             Directory for database (default: ~/.local/state/milton)
+  TZ                    Timezone (default: America/New_York)
         """,
     )
 
@@ -296,12 +332,17 @@ Environment Variables:
     cancel_parser.add_argument("id", type=int, help="Reminder ID to cancel")
     cancel_parser.add_argument("--json", action="store_true", help="Output JSON")
     cancel_parser.set_defaults(func=cmd_cancel)
+    
+    # Health command
+    health_parser = subparsers.add_parser("health", help="Show health status of the reminder system")
+    health_parser.set_defaults(func=cmd_health)
 
     # Run command
     run_parser = subparsers.add_parser("run", help="Run the reminder scheduler daemon")
     run_parser.add_argument("--interval", "-i", type=int, default=5, help="Check interval in seconds (default: 5)")
     run_parser.add_argument("--max-retries", type=int, default=3, help="Max retry attempts (default: 3)")
     run_parser.add_argument("--retry-backoff", type=int, default=60, help="Retry backoff in seconds (default: 60)")
+    run_parser.add_argument("--once", action="store_true", help="Run once and exit (for testing)")
     run_parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     run_parser.set_defaults(func=cmd_run)
 
