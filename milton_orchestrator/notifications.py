@@ -84,6 +84,7 @@ class NtfyProvider:
         topic: str,
         public_base_url: Optional[str] = None,
         action_token: Optional[str] = None,
+        dry_run: bool = False,
     ):
         """Initialize ntfy provider.
         
@@ -92,11 +93,13 @@ class NtfyProvider:
             topic: Topic to publish to
             public_base_url: Public URL for action callbacks (e.g., https://milton.example.com)
             action_token: Optional bearer token for action authentication
+            dry_run: If True, log payloads without actually posting
         """
         self.base_url = base_url.rstrip('/')
         self.topic = topic
         self.public_base_url = public_base_url.rstrip('/') if public_base_url else None
         self.action_token = action_token
+        self.dry_run = dry_run or os.getenv("MILTON_NOTIFY_DRY_RUN", "0") in ("1", "true", "yes")
     
     @property
     def name(self) -> str:
@@ -154,6 +157,19 @@ Actions: {action_labels}"""
         
         # Publish to ntfy
         url = f"{self.base_url}/{self.topic}"
+        
+        # DRY-RUN MODE: Log payload without posting
+        if self.dry_run:
+            logger.info(f"[DRY-RUN] Would POST reminder {reminder.id} to ntfy:")
+            logger.info(f"  URL: {url}")
+            logger.info(f"  Headers: {headers}")
+            logger.info(f"  Body: {full_body[:200]}{'...' if len(full_body) > 200 else ''}")
+            return DeliveryResult(
+                ok=True,
+                provider=self.name,
+                message_id="DRY_RUN",
+                metadata={"dry_run": True, "url": url, "headers": headers},
+            )
         
         try:
             response = requests.post(

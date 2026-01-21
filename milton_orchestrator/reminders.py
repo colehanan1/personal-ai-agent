@@ -30,9 +30,9 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Phase 0 enum constants
-REMINDER_CHANNELS = frozenset({"ntfy", "voice", "both", "desktop_popup"})
+REMINDER_CHANNELS = frozenset({"ntfy", "voice", "both", "desktop_popup", "morning_briefing"})
 REMINDER_PRIORITIES = frozenset({"low", "med", "high"})
-REMINDER_STATUSES = frozenset({"scheduled", "fired", "acknowledged", "snoozed", "canceled"})
+REMINDER_STATUSES = frozenset({"draft", "scheduled", "fired", "acknowledged", "snoozed", "canceled"})
 REMINDER_ACTIONS = frozenset({"DONE", "SNOOZE_30", "DELAY_2H", "EDIT_TIME"})
 REMINDER_SOURCES = frozenset({"webui", "phone", "voice", "other"})
 
@@ -621,7 +621,7 @@ class ReminderStore:
     ) -> bool:
         """Snooze a reminder by delaying due_at.
 
-        Sets status to 'snoozed' and resets sent_at.
+        Sets status back to 'scheduled' and resets sent_at so it can be claimed again.
         """
         now_ts = int(time.time())
         with self._lock, self._conn:
@@ -644,7 +644,7 @@ class ReminderStore:
 
             cursor = self._conn.execute(
                 """UPDATE reminders
-                   SET due_at = ?, status = 'snoozed', sent_at = NULL, updated_at = ?, audit_log = ?
+                   SET due_at = ?, status = 'scheduled', sent_at = NULL, updated_at = ?, audit_log = ?
                    WHERE id = ?""",
                 (new_due_at, now_ts, _serialize_list(audit_log), reminder_id),
             )
@@ -674,6 +674,8 @@ class ReminderStore:
     ) -> bool:
         """Append audit log entries to a reminder.
         
+        Uses BEGIN IMMEDIATE to prevent lost updates across processes.
+        
         Args:
             reminder_id: Reminder ID
             entries: List of audit entry dicts with ts, action, actor, details keys
@@ -682,26 +684,34 @@ class ReminderStore:
             True if successful, False if reminder not found
         """
         now_ts = int(time.time())
-        with self._lock, self._conn:
-            row = self._conn.execute(
-                "SELECT audit_log FROM reminders WHERE id = ?",
-                (reminder_id,),
-            ).fetchone()
-            if not row:
-                return False
-            
-            audit_log = _deserialize_list(row["audit_log"])
-            audit_log.extend(entries)
-            
-            # Keep last 100 entries to prevent unbounded growth
-            if len(audit_log) > 100:
-                audit_log = audit_log[-100:]
-            
-            self._conn.execute(
-                "UPDATE reminders SET audit_log = ?, updated_at = ? WHERE id = ?",
-                (_serialize_list(audit_log), now_ts, reminder_id),
-            )
-            return True
+        with self._lock:
+            # BEGIN IMMEDIATE to acquire write lock before reading
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT audit_log FROM reminders WHERE id = ?",
+                    (reminder_id,),
+                ).fetchone()
+                if not row:
+                    self._conn.rollback()
+                    return False
+                
+                audit_log = _deserialize_list(row["audit_log"])
+                audit_log.extend(entries)
+                
+                # Keep last 100 entries to prevent unbounded growth
+                if len(audit_log) > 100:
+                    audit_log = audit_log[-100:]
+                
+                self._conn.execute(
+                    "UPDATE reminders SET audit_log = ?, updated_at = ? WHERE id = ?",
+                    (_serialize_list(audit_log), now_ts, reminder_id),
+                )
+                self._conn.commit()
+                return True
+            except Exception:
+                self._conn.rollback()
+                raise
 
     def close(self) -> None:
         with self._lock:
@@ -1118,6 +1128,7 @@ def deliver_ntfy(
     ntfy_base_url: str,
     topic: str,
     public_base_url: Optional[str] = None,
+    dry_run: bool = False,
 ) -> dict:
     """
     Deliver a reminder notification to ntfy with action buttons.
@@ -1127,6 +1138,7 @@ def deliver_ntfy(
         ntfy_base_url: Base URL for ntfy server (e.g., https://ntfy.sh)
         topic: ntfy topic to publish to
         public_base_url: Base URL for callback actions (e.g., https://milton.tailnet.ts.net)
+        dry_run: If True, log payload without actually posting (for testing)
 
     Returns:
         dict with keys: ok (bool), status_code (int), response_snippet (str)
@@ -1166,6 +1178,19 @@ Actions: {action_labels}"""
 
     # Publish to ntfy
     url = f"{ntfy_base_url}/{topic}"
+    
+    # DRY-RUN MODE: Log payload without posting
+    if dry_run:
+        logger.info(f"[DRY-RUN] Would POST reminder {reminder.id} to ntfy:")
+        logger.info(f"  URL: {url}")
+        logger.info(f"  Headers: {headers}")
+        logger.info(f"  Body: {body[:200]}{'...' if len(body) > 200 else ''}")
+        return {
+            "ok": True,
+            "status_code": 200,
+            "response_snippet": "DRY_RUN_MODE",
+        }
+    
     try:
         response = requests.post(
             url,

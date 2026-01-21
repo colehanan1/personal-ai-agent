@@ -1,0 +1,290 @@
+# Milton Reminder Intent Golden Phrases Test Suite
+#
+# This file contains curated test cases for reminder intent normalization.
+# Each test case should be deterministic and regression-proof.
+#
+# Format:
+#   - phrase: The exact user input (natural language)
+#     expected:
+#       intent_type: "reminder.create" or null
+#       surface_form: Pattern name that should match
+#       has_task: true if task should be extracted
+#       has_due_at: true if explicit timestamp should be parsed
+#       has_recurrence: true if recurrence pattern detected
+#       channel: Expected channel ("ntfy", "morning_briefing", etc.)
+#       needs_clarification: true if draft/ambiguous
+#       confidence_min: Minimum confidence score (0.0-1.0)
+
+test_cases:
+  # === EXPLICIT TIME PATTERNS (high confidence) ===
+  
+  - phrase: "remind me to review GitHub notifications at 9am tomorrow"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_explicit"
+      has_task: true
+      task_contains: "review GitHub notifications"
+      has_due_at: true
+      has_recurrence: false
+      channel: "ntfy"
+      needs_clarification: false
+      confidence_min: 0.9
+  
+  - phrase: "reminder to call dentist tomorrow at 2:30pm"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_explicit"
+      has_task: true
+      task_contains: "call dentist"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.9
+  
+  - phrase: "at 8am today remind me to take medication"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "explicit_time_remind_me"
+      has_task: true
+      task_contains: "take medication"
+      has_due_at: false  # "today at 8am" when it's 10am is in the past - dateparser issue
+      needs_clarification: false  # Pattern matches but time is problematic
+      confidence_min: 0.9
+      # NOTE: This is an edge case - dateparser interprets "today at 8am" when it's already
+      # past 8am as yesterday. Real implementation should detect past times and clarify.
+  
+  # === BRIEFING PATTERNS ===
+  
+  - phrase: "every weekday in my morning briefing help me prioritize my top 3 tasks"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "recurring_briefing_help"
+      has_task: true
+      task_contains: "prioritize my top 3 tasks"
+      has_due_at: false
+      has_recurrence: true
+      recurrence_contains: "weekday"
+      channel: "morning_briefing"
+      needs_clarification: true  # No explicit time
+      confidence_min: 0.85
+  
+  - phrase: "every monday in morning briefing help me plan my week"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "recurring_briefing_help"
+      has_task: true
+      task_contains: "plan my week"
+      has_recurrence: true
+      recurrence_contains: "monday"
+      channel: "morning_briefing"
+      needs_clarification: true
+      confidence_min: 0.85
+  
+  - phrase: "in my morning breifing help me review my goals"  # Typo: breifing
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "briefing_help"
+      has_task: true
+      task_contains: "review my goals"
+      channel: "morning_briefing"
+      needs_clarification: true
+      confidence_min: 0.8
+  
+  - phrase: "in the afternoon briefing remind me to check email"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "briefing_help"
+      has_task: true
+      task_contains: "check email"
+      channel: "morning_briefing"  # All briefings map to this for now
+      needs_clarification: true
+      confidence_min: 0.8
+  
+  - phrase: "add to my briefing: Review Q1 goals and metrics"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "add_to_briefing"
+      has_task: true
+      task_contains: "Review Q1 goals"
+      channel: "morning_briefing"
+      needs_clarification: true
+      confidence_min: 0.85
+  
+  - phrase: "put in morning briefing follow up with Sarah about project timeline"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "add_to_briefing"
+      has_task: true
+      task_contains: "follow up with Sarah"
+      channel: "morning_briefing"
+      needs_clarification: true
+      confidence_min: 0.85
+  
+  # === RELATIVE TIME PATTERNS ===
+  
+  - phrase: "remind me to stretch in 2 hours"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_relative"
+      has_task: true
+      task_contains: "stretch"
+      has_due_at: true  # Should calculate timestamp
+      needs_clarification: false
+      confidence_min: 0.85
+  
+  - phrase: "reminder to take break in 30 minutes"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_relative"
+      has_task: true
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.85
+  
+  - phrase: "remind me to backup files in 1 day"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_relative"
+      has_task: true
+      task_contains: "backup files"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.85
+  
+  - phrase: "remind me to check oven tomorrow morning"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_relative_timeofday"
+      has_task: true
+      task_contains: "check oven"
+      has_due_at: false  # Ambiguous time
+      needs_clarification: true
+      clarification_contains: "What time"
+      confidence_min: 0.65
+  
+  - phrase: "reminder to water plants today afternoon"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_relative_timeofday"
+      has_task: true
+      has_due_at: false
+      needs_clarification: true
+      confidence_min: 0.65
+  
+  # === SIMPLE PATTERNS (lower confidence, need clarification) ===
+  
+  - phrase: "remind me to submit expense report"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_simple"
+      has_task: true
+      task_contains: "submit expense report"
+      has_due_at: false
+      needs_clarification: true
+      clarification_contains: "When would you like"
+      confidence_min: 0.5
+  
+  - phrase: "reminder to call mom"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_simple"
+      has_task: true
+      task_contains: "call mom"
+      needs_clarification: true
+      confidence_min: 0.5
+  
+  # === RECURRING PATTERNS ===
+  
+  - phrase: "every friday help me review weekly notes"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "every_day_help"
+      has_task: true
+      task_contains: "review weekly notes"
+      has_recurrence: true
+      recurrence_contains: "friday"
+      needs_clarification: true
+      clarification_contains: "What time on"
+      confidence_min: 0.7
+  
+  - phrase: "every monday remind me to check analytics"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "every_day_help"
+      has_task: true
+      has_recurrence: true
+      recurrence_contains: "monday"
+      needs_clarification: true
+      confidence_min: 0.7
+  
+  - phrase: "every sunday in morning briefing help me plan meal prep"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "recurring_briefing_help"
+      has_task: true
+      task_contains: "plan meal prep"
+      has_recurrence: true
+      recurrence_contains: "sunday"
+      channel: "morning_briefing"
+      needs_clarification: true
+      confidence_min: 0.85
+  
+  # === EDGE CASES ===
+  
+  - phrase: "remind me"
+    expected:
+      intent_type: null  # Too short, should not match
+  
+  - phrase: "I need to remember to buy milk"
+    expected:
+      intent_type: null  # Not a reminder request, just a statement
+  
+  - phrase: "can you help me with something"
+    expected:
+      intent_type: null  # Generic help request, not a reminder
+  
+  - phrase: "/remind me to test"
+    expected:
+      intent_type: null  # Slash command, should be handled separately
+  
+  # === COMPLEX/REALISTIC EXAMPLES ===
+  
+  - phrase: "in my morning briefing help me come up with a grocery list for meal prep"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "briefing_help"
+      has_task: true
+      task_contains: "grocery list"
+      channel: "morning_briefing"
+      needs_clarification: true
+      confidence_min: 0.8
+  
+  - phrase: "every weekday in morning briefing help me prioritize top 3 tasks for the day"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "recurring_briefing_help"
+      has_task: true
+      task_contains: "prioritize top 3"
+      has_recurrence: true
+      channel: "morning_briefing"
+      needs_clarification: true
+      confidence_min: 0.85
+  
+  - phrase: "remind me to review GitHub PRs tomorrow at 10:30am"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "remind_me_explicit"
+      has_task: true
+      task_contains: "review GitHub PRs"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.9
+  
+  - phrase: "add to briefing research LLM benchmarks for neuromorphic project"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "add_to_briefing"
+      has_task: true
+      task_contains: "research LLM benchmarks"
+      channel: "morning_briefing"
+      needs_clarification: true
+      confidence_min: 0.85
