@@ -35,7 +35,7 @@ milton-reminders = "milton_orchestrator.reminders_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["milton_orchestrator*"]
+include = ["milton_orchestrator*", "self_upgrade*"]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]
