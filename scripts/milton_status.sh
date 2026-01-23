@@ -26,7 +26,7 @@ echo ""
 # Show systemd service status
 info "Systemd Service Status:"
 echo ""
-systemctl --user status milton-api.service milton-gateway.service --no-pager || true
+systemctl --user status milton-api.service milton-gateway.service milton-reminders.service --no-pager || true
 echo ""
 
 # Show effective configuration
@@ -37,6 +37,15 @@ echo "  Gateway:          $GATEWAY_URL"
 echo "  LLM Backend:      $LLM_API_URL"
 echo "  Weaviate:         $WEAVIATE_URL"
 echo "  Memory Retrieval: ${MILTON_GATEWAY_MEMORY_RETRIEVAL:-1}"
+echo ""
+
+# Check Open WebUI
+info "Open WebUI Status:"
+if docker ps --format '{{.Names}}' | grep -q "^open-webui$"; then
+    success "Container running - http://localhost:3000"
+else
+    warn "Container not running - start with: $SCRIPT_DIR/open_webui_up.sh"
+fi
 echo ""
 
 # Health checks
@@ -106,10 +115,12 @@ echo ""
 
 # Log file info
 info "Log Files:"
-echo "  API:     $MILTON_STATE_DIR/logs/milton-api.log"
-echo "  Gateway: $MILTON_STATE_DIR/logs/milton-gateway.log"
+echo "  API:       $MILTON_STATE_DIR/logs/milton-api.log"
+echo "  Gateway:   $MILTON_STATE_DIR/logs/milton-gateway.log"
+echo "  Reminders: journalctl --user -u milton-reminders -n 100 --no-pager"
 echo ""
 info "View logs:"
 echo "  journalctl --user -u milton-api -f"
 echo "  journalctl --user -u milton-gateway -f"
+echo "  journalctl --user -u milton-reminders -f"
 echo ""

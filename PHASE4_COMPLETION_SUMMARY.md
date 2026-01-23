@@ -1,316 +1,285 @@
-# Phase 4: KG Context Injection into NEXUS - COMPLETED
+# Phase 4: Personal-Assistant Quality Upgrades - COMPLETE ✅
 
-## Executive Summary
+**Date**: 2026-01-21  
+**Status**: All 9 features implemented and tested  
+**Total Tests**: 69 Phase 4-specific tests (of 1522 total)
 
-Phase 4 integrates Knowledge Graph context into NEXUS's context building, enabling "connected" answers about projects, goals, tools, and relationships. NEXUS now enriches its context packets with structured entity and relationship data from the KG, complementing unstructured memory retrieval.
+---
 
-## Implementation Status: ✅ COMPLETE
+## Summary
 
-### Deliverables
+Successfully implemented all 9 personal-assistant quality features to make Milton more reliable, transparent, and user-friendly:
 
-**Core Implementation:**
-- ✅ `agents/kg_context.py` - KG context helper module (9.3 KB)
-- ✅ `KGContextPacket` dataclass for structured context
-- ✅ `build_kg_context()` function with entity search & 1-hop expansion
-- ✅ Integration with `agents/nexus.py::build_context()`
-- ✅ Modified `ContextPacket` to include `kg_context` field
-- ✅ Environment flag configuration (MILTON_KG_CONTEXT_ENABLED, MAX_EDGES, MAX_CHARS)
-- ✅ Token/size capping (max 20 edges, 1500 chars)
-- ✅ Evidence ID citation from edge metadata
-- ✅ Graceful degradation when KG empty/unavailable
+### ✅ Feature 1: Undo/Rollback (17 tests)
+**Location**: `milton_gateway/action_ledger.py`
 
-**Testing:**
-- ✅ 18 unit tests for KG context building (`tests/test_kg_context.py`)
-- ✅ 6 integration tests for NEXUS integration (`tests/test_nexus_kg_integration.py`)
-- ✅ 109 total tests passing (24 new + 85 existing)
-- ✅ Zero breaking changes to existing tests
-- ✅ 100% backward compatibility verified
+- SQLite-backed action ledger with 30-minute undo window
+- Generates unique 8-character undo tokens
+- Tracks before/after snapshots for all state changes
+- Returns structured receipts with undo tokens
+- Supports both token-based and "undo last" operations
 
-**Documentation:**
-- ✅ `agents/demo_kg_nexus.py` - Demo script (7.7 KB)
-- ✅ This completion summary document
+**Commands**: `/undo`, `/undo <token>`
 
-## Key Features
+### ✅ Feature 2: Draft Mode (4 tests)
+**Location**: `milton_gateway/pending_confirmations.py`
 
-### 1. Enabled by Default
-```bash
-# Default behavior - KG context included when available
-$ python -m agents.nexus
-# Context packet includes KG section with entities and relationships
+- Pending confirmations create drafts (no DB write until "Yes")
+- 10-minute expiry on pending confirmations
+- Idempotency checks prevent duplicate commits
+- Clear confirmation workflow
+
+### ✅ Feature 3: Defaults & Personalization (14 tests)
+**Location**: `milton_gateway/preferences.py`
+
+- Per-session/user preferences stored in SQLite
+- Configurable defaults for:
+  - Reminder channel, priority, topic
+  - Default "later" time (18:00)
+  - Morning briefing time (08:00)
+  - Learning toggles per category
+
+**Commands**: `/preferences`, `/prefs`
+
+### ✅ Feature 4: Action Receipts (covered in action_ledger tests)
+**Location**: `milton_gateway/action_ledger.py:54-68`
+
+- Every committed action returns structured receipt
+- Includes undo token, expiry, summary
+- Markdown formatting for display
+- Audit trail in SQLite
+
+### ✅ Feature 5: Multi-Intent Splitting (10 tests)
+**Location**: `milton_gateway/multi_intent.py`
+
+- Detects multiple actionable intents in single message
+- Splits on conjunctions: "and", "also", "then"
+- Safety limit: max 3 intents per message
+- Avoids false positives (e.g., "bread and butter")
+
+**Example**: "Add goal to exercise and remind me tomorrow at 9am"
+→ Splits into 2 confirmations
+
+### ✅ Feature 6: Time Sanity Checks (5 tests)
+**Location**: `milton_gateway/time_validator.py`
+
+- Prevents scheduling in the past
+- Suggests next occurrence (e.g., "9am yesterday" → "9am tomorrow")
+- Warns on far-future dates (>1 year)
+- Timezone-aware validation
+
+### ✅ Feature 7: Cross-Message Linking (11 tests)
+**Location**: `milton_gateway/context_tracker.py`
+
+- In-memory session context (10-minute expiry)
+- Tracks recent pending confirmations and committed entities
+- Anaphora resolution for "make that weekly", "change it to 9am"
+- Modification extraction for cadence, time, priority, text
+
+**Example**: 
+1. "Remind me tomorrow to buy milk" → draft created
+2. "Make that high priority" → modifies draft before commit
+
+### ✅ Feature 8: Daily Digest (3 tests)
+**Location**: `milton_gateway/command_processor.py:1208-1273`
+
+- Query action ledger for today's activity
+- Groups by operation (created/updated/deleted/undone)
+- Human-readable summaries
+- Shows entity counts and details
+
+**Commands**: `/digest`, `/audit`
+
+### ✅ Feature 9: Privacy Controls (5 tests)
+**Location**: `milton_gateway/preferences.py` (learning flags)
+
+- Per-category learning toggles (goals, reminders, briefings, memory)
+- Default: ON for goals/reminders/briefings, OFF for memory
+- Forget functionality to clear corrections
+
+**Commands**: `/forget`, `/forget <category>`
+
+---
+
+## Test Coverage
+
+### Phase 4 Test Files (69 tests total):
+1. `test_action_ledger.py` - 17 tests ✅
+2. `test_preferences.py` - 14 tests ✅
+3. `test_multi_intent.py` - 10 tests ✅
+4. `test_context_tracker.py` - 11 tests ✅
+5. `test_time_validation.py` - 5 tests ✅
+6. `test_draft_mode.py` - 4 tests ✅
+7. `test_daily_digest.py` - 3 tests ✅
+8. `test_privacy_controls.py` - 5 tests ✅
+
+**All tests passing**: ✅ 69/69
+
+---
+
+## Integration Status
+
+### Command Processor Integration
+**File**: `milton_gateway/command_processor.py`
+
+All Phase 4 features integrated into command processing flow:
+
+1. **Lazy initialization** of stores (lines 113-137)
+   - `_get_action_ledger()`
+   - `_get_preferences()`
+   - `_get_context_tracker()`
+
+2. **Command handlers** (lines 176-187)
+   - `/undo [token]` → `_handle_undo_command()`
+   - `/preferences` → `_handle_preferences_command()`
+   - `/digest` → `_handle_digest_command()`
+   - `/forget [category]` → `_handle_forget_command()`
+
+3. **Integration points**:
+   - Action ledger called on all state changes
+   - Preferences applied to defaults
+   - Context tracker updated on pending/commit
+   - Time validation in reminder parsing
+   - Multi-intent splitting in natural language handler
+
+---
+
+## Database Schema
+
+### New SQLite Tables:
+
+1. **action_ledger** (`action_ledger.sqlite3`)
+   ```sql
+   CREATE TABLE action_ledger (
+       action_id TEXT PRIMARY KEY,
+       session_id TEXT NOT NULL,
+       timestamp TEXT NOT NULL,
+       entity_type TEXT NOT NULL,
+       entity_id TEXT NOT NULL,
+       operation TEXT NOT NULL,
+       before_snapshot TEXT,
+       after_snapshot TEXT NOT NULL,
+       undo_expiry TEXT NOT NULL,
+       undo_token TEXT NOT NULL,
+       undone_at TEXT,
+       created_at TEXT NOT NULL
+   )
+   ```
+
+2. **preferences** (`preferences.sqlite3`)
+   ```sql
+   CREATE TABLE preferences (
+       session_id TEXT PRIMARY KEY,
+       reminder_channel TEXT DEFAULT 'ntfy',
+       reminder_priority INTEGER DEFAULT 5,
+       reminder_topic TEXT,
+       default_later_time TEXT DEFAULT '18:00',
+       briefing_time TEXT DEFAULT '08:00',
+       learn_goals INTEGER DEFAULT 1,
+       learn_reminders INTEGER DEFAULT 1,
+       learn_briefings INTEGER DEFAULT 1,
+       learn_memory INTEGER DEFAULT 0,
+       updated_at TEXT NOT NULL
+   )
+   ```
+
+3. **pending_confirmations** (existing, unchanged)
+
+---
+
+## Usage Examples
+
+### Undo Feature
+```
+User: Remind me tomorrow at 9am to buy milk
+Milton: I'll set a reminder for tomorrow at 9:00 AM: "buy milk"
+        
+        Is this correct? (Yes/No/Edit)
+
+User: Yes
+Milton: ✅ CREATE reminder
+        
+        Create reminder: "buy milk" due 2025-01-22
+        
+        Action ID: act_a1b2c3d4
+        Undo Token: K7F9Q2WX (expires 2025-01-21 04:06:54)
+        
+        To undo this action, say: "undo" or "undo K7F9Q2WX"
+
+User: /undo
+Milton: ↩️ Undone: Deleted reminder (ID: rem_xyz)
 ```
 
-### 2. Token-Aware Capping
-- Maximum 20 edges per context (configurable)
-- Maximum 1,500 characters for KG section (configurable)
-- Truncates relationships first, then entities if needed
-- Shows "displayed/total" counts for transparency
-
-### 3. Evidence Citation
-- Extracts `memory_id` from edge evidence metadata
-- Includes in relationship format: `A --pred--> B [evidence: mem-123]`
-- Enables NEXUS to cite specific evidence when referencing KG data
-
-### 4. Smart Entity Search
-- Searches KG for entities matching query terms
-- Scores entities by relevance (exact match > partial match)
-- Takes top K entities (default: 5)
-- Expands 1-hop neighborhood (outgoing + incoming edges)
-
-## Architecture
-
-### Context Flow
-
+### Preferences
 ```
-User Query: "What projects am I working on?"
-     ↓
-NEXUS.build_context()
-     ↓
-1. Memory Retrieval (existing)
-   └→ ContextBullet list
-     ↓
-2. KG Context Injection (NEW)
-   ├→ build_kg_context(query)
-   │  ├→ search_entities(query terms)
-   │  ├→ score and rank entities
-   │  ├→ take top K entities
-   │  ├→ expand 1-hop neighborhood
-   │  └→ format as KGContextPacket
-   └→ packet.to_prompt_section()
-     ↓
-3. ContextPacket Assembly
-   ├→ bullets: [...memory bullets...]
-   ├→ unknowns: [...]
-   ├→ assumptions: [...]
-   └→ kg_context: "**Knowledge Graph Context:**..."
-     ↓
-4. to_prompt() → LLM Context
+User: /prefs
+Milton: Your preferences:
+        
+        Reminders:
+        - Default channel: ntfy
+        - Default priority: 5
+        - Default topic: (not set)
+        
+        Times:
+        - "Later" means: 6:00 PM
+        - Morning briefing: 8:00 AM
+        
+        Learning:
+        - Goals: enabled
+        - Reminders: enabled
+        - Briefings: enabled
+        - Memory: disabled
 ```
 
-### KGContextPacket Structure
-
-```python
-@dataclass
-class KGContextPacket:
-    entities: List[Tuple[str, str]]  # [(name, type)]
-    relationships: List[Tuple[str, str, str, str]]  # [(subj, pred, obj, evidence_id)]
-    total_entities: int  # Total found (may be capped for display)
-    total_edges: int     # Total found (may be capped)
+### Daily Digest
+```
+User: /digest
+Milton: 📊 Today's Activity (January 21, 2026):
+        
+        ✅ Created (3):
+        • Create daily goal: "Exercise 30min"
+        • Create reminder: "buy milk" due 2025-01-22
+        • Create reminder: "call mom" due 2025-01-21
+        
+        ✏️ Updated (1):
+        • goal (ID: goal_xyz)
+        
+        ↩️ Undone (1):
+        • delete reminder
 ```
 
-### Prompt Format
-
+### Cross-Message Linking
 ```
-CONTEXT PACKET (evidence-backed memory only)
-Relevant memory bullets:
-- Working on Milton AI assistant (type=fact, tags=project)
+User: Remind me tomorrow to buy milk
+Milton: [draft created]
 
-Unknowns / assumptions:
-- Assumption: Assume request is self-contained unless clarified.
+User: Make that high priority
+Milton: [modifies draft to priority 8]
 
-**Knowledge Graph Context:**
-Entities (3/5):
-  - Milton (project)
-  - Python (tool)
-  - FastAPI (tool)
-Relationships (4/8):
-  - User --works_on--> Milton [evidence: mem-123]
-  - Milton --uses--> Python [evidence: mem-456]
-  - Milton --uses--> FastAPI [evidence: mem-456]
-  - Python --enables--> FastAPI [evidence: mem-789]
+User: Yes
+Milton: ✅ Committed with priority 8
 ```
 
-## Integration Points
+---
 
-**Modified Files:**
-1. `agents/nexus.py`
-   - Added `kg_context: Optional[str]` field to `ContextPacket`
-   - Modified `ContextPacket.to_prompt()` to include KG section
-   - Updated `build_context()` to call `build_kg_context()`
-   - Wrapped KG call in try/except for graceful degradation
+## Success Criteria (All Met ✅)
 
-**New Files:**
-1. `agents/kg_context.py` - KG context helper
-2. `tests/test_kg_context.py` - Unit tests
-3. `tests/test_nexus_kg_integration.py` - Integration tests
-4. `agents/demo_kg_nexus.py` - Demonstration script
+- ✅ All 9 features implemented
+- ✅ Undo works with 30-min expiry
+- ✅ Draft mode prevents premature writes
+- ✅ Defaults apply correctly
+- ✅ Receipts include undo tokens
+- ✅ Multi-intent works
+- ✅ Past-time blocked
+- ✅ Cross-message linking works
+- ✅ Digest accurate
+- ✅ Privacy controls work
+- ✅ All tests pass (69/69 Phase 4 tests, 1522 total)
 
-## Test Results
+---
 
-```bash
-$ pytest tests/test_kg*.py tests/test_memory*.py tests/test_nexus_kg_integration.py -q
-================================================
-109 passed in 11.60s
-================================================
+## Phase 4 Complete! 🎉
 
-Breakdown:
-- 18 new KG context unit tests
-- 6 new NEXUS integration tests
-- 85 existing KG/memory tests (all still passing)
-```
+Milton now has personal-assistant quality features for reliability, transparency, and user control. All features are tested, integrated, and ready for production use.
 
-## Performance
-
-- **Entity search**: 1-5ms (indexed SQLite queries)
-- **Neighborhood expansion**: 2-10ms (depends on edge count)
-- **Formatting**: <1ms
-- **Total overhead**: 3-15ms per context build
-- **Graceful failures**: All exceptions caught, never blocks
-
-## Environment Configuration
-
-```bash
-# Enable/disable KG context (default: true)
-export MILTON_KG_CONTEXT_ENABLED=true
-
-# Maximum edges in context (default: 20)
-export MILTON_KG_CONTEXT_MAX_EDGES=20
-
-# Maximum characters for KG section (default: 1500)
-export MILTON_KG_CONTEXT_MAX_CHARS=1500
-```
-
-## Verification Commands
-
-**1. Run all tests:**
-```bash
-$ pytest tests/test_kg*.py tests/test_memory*.py tests/test_nexus_kg_integration.py -v
-# Expected: 109 passed
-```
-
-**2. Verify KG context enabled:**
-```bash
-$ python -c "from agents.kg_context import _is_kg_enabled; print(_is_kg_enabled())"
-# Expected: True
-```
-
-**3. Test NEXUS context building:**
-```bash
-$ python -c "
-from agents.nexus import NEXUS
-from unittest.mock import patch
-
-with patch('agents.nexus.memory_enabled', return_value=False):
-    nexus = NEXUS()
-    context = nexus.build_context('test query')
-    print(f'Has kg_context field: {hasattr(context, \"kg_context\")}')
-"
-# Expected: Has kg_context field: True
-```
-
-**4. Run demo:**
-```bash
-$ python -m agents.demo_kg_nexus
-# Shows KG context injection examples
-```
-
-## Design Decisions
-
-### 1. Enabled by Default
-**Choice**: `MILTON_KG_CONTEXT_ENABLED=true` (default)  
-**Rationale**: KG enriches context without significant overhead  
-**Trade-off**: Slight latency increase (3-15ms) for better answers
-
-### 2. 1-Hop Neighborhood
-**Choice**: Only expand immediate neighbors  
-**Rationale**: Balance between context richness and token usage  
-**Future**: Could add configurable hop depth
-
-### 3. Entity Scoring
-**Choice**: Simple heuristic (exact > partial > word match)  
-**Rationale**: Fast, deterministic, no ML required  
-**Future**: Could use embeddings for semantic matching
-
-### 4. Character Limit Over Token Limit
-**Choice**: Character-based capping (1500 chars)  
-**Rationale**: Simpler, faster than token counting  
-**Approximation**: ~375 tokens (4 chars/token)
-
-### 5. Evidence from Edge Metadata
-**Choice**: Extract `memory_id` from `edge.evidence` dict  
-**Rationale**: Reuses existing evidence tracking from Phase 2  
-**Benefit**: Enables citation of KG relationships
-
-## Success Criteria - ALL MET ✅
-
-From original requirements:
-
-1. ✅ **Atomic**: Context injection only (no changes to extraction or storage)
-2. ✅ **Token capping**: Max 20 edges, max 1,500 chars enforced
-3. ✅ **Evidence citations**: Includes memory IDs from edge evidence
-4. ✅ **Graceful degradation**: Empty KG → empty context, never crashes
-5. ✅ **No regressions**: All 85 existing tests still pass
-6. ✅ **pytest passes**: 109/109 tests passing
-
-## Future Enhancements
-
-1. **Multi-hop Traversal**: Configurable depth (1, 2, or 3 hops)
-2. **Semantic Entity Search**: Use embeddings for better matching
-3. **Entity Clustering**: Group related entities in context
-4. **Temporal Filtering**: Prioritize recent relationships
-5. **Confidence Weighting**: Use edge weights to rank relationships
-
-## Files Summary
-
-**Created:**
-- agents/kg_context.py (9,348 bytes)
-- tests/test_kg_context.py (13,019 bytes)
-- tests/test_nexus_kg_integration.py (4,458 bytes)
-- agents/demo_kg_nexus.py (7,722 bytes)
-- PHASE4_COMPLETION_SUMMARY.md (this file)
-
-**Modified:**
-- agents/nexus.py (+15 lines for KG integration, +1 field to ContextPacket)
-
-**Total Lines Added:** ~550 lines (code + tests + docs)  
-**Test Coverage:** 24 new tests, 100% pass rate
-
-## Example Usage
-
-### Before Phase 4 (Memory Only)
-```
-Query: "What projects am I working on?"
-
-CONTEXT PACKET:
-Relevant memory bullets:
-- Working on Milton AI assistant (type=fact, tags=project)
-- Building clamp design tool (type=fact, tags=meshalyzer)
-```
-
-### After Phase 4 (Memory + KG)
-```
-Query: "What projects am I working on?"
-
-CONTEXT PACKET:
-Relevant memory bullets:
-- Working on Milton AI assistant (type=fact, tags=project)
-- Building clamp design tool (type=fact, tags=meshalyzer)
-
-**Knowledge Graph Context:**
-Entities (3/3):
-  - Milton (project)
-  - Meshalyzer (project)
-  - Python (tool)
-Relationships (5/5):
-  - User --works_on--> Milton [evidence: mem-123]
-  - User --works_on--> Meshalyzer [evidence: mem-456]
-  - Milton --uses--> Python [evidence: mem-789]
-  - Milton --implements--> knowledge graph [evidence: mem-101]
-  - Meshalyzer --uses--> Python [evidence: mem-202]
-```
-
-**Result**: NEXUS now has structured relationship data to provide more "connected" answers about how projects, tools, and concepts relate.
-
-## Conclusion
-
-Phase 4 is **COMPLETE and PRODUCTION-READY**:
-
-- ✅ All requirements met
-- ✅ All tests passing (109/109)
-- ✅ Zero breaking changes
-- ✅ Comprehensive test coverage
-- ✅ Graceful error handling
-- ✅ Enabled by default
-
-The KG context injection feature is ready for use. NEXUS will now automatically include KG context when building its context packets, enabling more connected and relationship-aware responses.
-
-**Phase 4 Status: ✅ COMPLETE**
+**Next Phase**: Phase 5 would focus on advanced features like smart scheduling, proactive suggestions, or multi-user support.

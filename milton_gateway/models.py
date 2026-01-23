@@ -108,3 +108,90 @@ class ErrorDetail(BaseModel):
 class ErrorResponse(BaseModel):
     """OpenAI-compatible error response."""
     error: ErrorDetail
+
+
+# Declarative Memory models
+class AddMemoryRequest(BaseModel):
+    """Request to add a declarative memory."""
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    source: Literal["webui", "phone", "voice", "api"] = "api"
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    context_ref: Optional[str] = None
+
+
+class UpdateMemoryRequest(BaseModel):
+    """Request to update a declarative memory."""
+    content: Optional[str] = None
+    tags: Optional[list[str]] = None
+    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    context_ref: Optional[str] = None
+
+
+class MemoryResponse(BaseModel):
+    """Response with a single declarative memory."""
+    id: str
+    content: str
+    tags: list[str]
+    source: str
+    confidence: Optional[float]
+    context_ref: Optional[str]
+    created_at: int
+    updated_at: int
+
+
+class MemoryListResponse(BaseModel):
+    """Response with a list of declarative memories."""
+    memories: list[MemoryResponse]
+    count: int
+
+
+class MemoryOperationResponse(BaseModel):
+    """Response for memory operations (add/update/delete)."""
+    success: bool
+    message: str
+    memory_id: Optional[str] = None
+
+
+# Activity Snapshot models
+class AddSnapshotRequest(BaseModel):
+    """Request to add an activity snapshot."""
+    model_config = {"extra": "forbid"}  # Reject unknown fields
+    
+    device_id: str
+    device_type: Literal["mac", "pc", "pi", "phone"]
+    captured_at: int
+    active_app: Optional[str] = None
+    window_title: Optional[str] = None
+    project_path: Optional[str] = None
+    git_branch: Optional[str] = None
+    recent_files: Optional[list[str]] = Field(default=None, max_length=10)
+    notes: Optional[str] = Field(default=None, max_length=500)
+
+
+class SnapshotResponse(BaseModel):
+    """Response with a single activity snapshot."""
+    id: str
+    device_id: str
+    device_type: str
+    captured_at: int
+    active_app: Optional[str]
+    window_title: Optional[str]
+    project_path: Optional[str]
+    git_branch: Optional[str]
+    recent_files: list[str]
+    notes: Optional[str]
+    created_at: int
+
+
+class SnapshotListResponse(BaseModel):
+    """Response with a list of activity snapshots."""
+    snapshots: list[SnapshotResponse]
+    count: int
+
+
+class SnapshotOperationResponse(BaseModel):
+    """Response for snapshot operations (add)."""
+    success: bool
+    message: str
+    snapshot_id: Optional[str] = None

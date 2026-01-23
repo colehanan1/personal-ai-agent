@@ -37,11 +37,11 @@ def snapshot_store(temp_state_dir):
 
 
 @pytest.fixture
-def command_processor():
-    """Initialize CommandProcessor."""
+def command_processor(temp_state_dir):
+    """Initialize CommandProcessor with temp state directory."""
     from milton_gateway.command_processor import CommandProcessor
     
-    processor = CommandProcessor()
+    processor = CommandProcessor(state_dir=temp_state_dir)
     yield processor
     # Note: close() is async but we're not using it in these sync tests
 

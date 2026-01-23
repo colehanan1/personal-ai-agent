@@ -214,12 +214,19 @@ class TestBriefingStore:
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
     """Create a test client with isolated database."""
+    # Clear any action token from environment (make tests hermetic)
+    monkeypatch.delenv("MILTON_ACTION_TOKEN", raising=False)
+    monkeypatch.delenv("MILTON_REQUIRE_ACTION_TOKEN", raising=False)
+    
     # Set STATE_DIR to temp directory before importing app
     monkeypatch.setenv("STATE_DIR", str(tmp_path))
     monkeypatch.setenv("MILTON_STATE_DIR", str(tmp_path))
 
     # Import app after setting env vars
     import scripts.start_api_server as server_module
+
+    # Initialize app without loading .env (use monkeypatched env only)
+    server_module.create_app(load_env=False)
 
     # Create new stores in temp directory
     test_briefing_store = BriefingStore(tmp_path / "briefing.sqlite3")
@@ -557,6 +564,144 @@ class TestRemindersAPI:
         assert response.status_code == 404
         data = response.get_json()
         assert "error" in data
+
+
+@pytest.mark.integration(reason="API client setup is slow; opt-in only.")
+class TestReminderActionsAPI:
+    """Tests for /api/reminders/<id>/action endpoint."""
+
+    def test_action_done_success(self, app_client):
+        """Test POST /api/reminders/<id>/action with DONE."""
+        client, _, reminder_store = app_client
+
+        # Create a reminder
+        now = int(time.time())
+        reminder_id = reminder_store.add_reminder(
+            kind="REMIND",
+            due_at=now - 60,  # Past due
+            message="Test reminder for DONE action",
+            timezone="America/Chicago",
+        )
+        # Mark as sent first (typical flow)
+        reminder_store.mark_sent([reminder_id])
+
+        # Verify initial state
+        reminder = reminder_store.get_reminder(reminder_id)
+        assert reminder.status == "fired"
+
+        # Call action endpoint
+        response = client.post(
+            f"/api/reminders/{reminder_id}/action",
+            data=json.dumps({"action": "DONE"}),
+            content_type="application/json",
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["id"] == reminder_id
+        assert data["action"] == "DONE"
+        assert data["status"] == "acknowledged"
+        assert data["due_at"] is None  # Not changed for DONE
+
+        # Verify database state
+        reminder = reminder_store.get_reminder(reminder_id)
+        assert reminder.status == "acknowledged"
+        assert len(reminder.audit_log) >= 2  # created + acknowledged
+        assert any("DONE" in entry.get("details", "") for entry in reminder.audit_log)
+
+    def test_action_snooze_30_success(self, app_client):
+        """Test POST /api/reminders/<id>/action with SNOOZE_30."""
+        client, _, reminder_store = app_client
+
+        now = int(time.time())
+        reminder_id = reminder_store.add_reminder(
+            kind="REMIND",
+            due_at=now - 60,
+            message="Test reminder for SNOOZE",
+            timezone="America/New_York",
+        )
+        reminder_store.mark_sent([reminder_id])
+
+        response = client.post(
+            f"/api/reminders/{reminder_id}/action",
+            data=json.dumps({"action": "SNOOZE_30"}),
+            content_type="application/json",
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["action"] == "SNOOZE_30"
+        assert data["status"] == "scheduled"  # Snoozed reminders return to scheduled status
+        assert data["due_at"] is not None
+        # Should be ~30 minutes in future
+        assert data["due_at"] > now + (29 * 60)
+        assert data["due_at"] < now + (31 * 60)
+
+        # Verify database
+        reminder = reminder_store.get_reminder(reminder_id)
+        assert reminder.status == "scheduled"  # Snoozed reminders return to scheduled status
+        assert reminder.sent_at is None  # Reset by snooze
+
+    def test_action_delay_2h_success(self, app_client):
+        """Test POST /api/reminders/<id>/action with DELAY_2H."""
+        client, _, reminder_store = app_client
+
+        now = int(time.time())
+        reminder_id = reminder_store.add_reminder(
+            kind="ALARM",
+            due_at=now - 120,
+            message="Test alarm for DELAY",
+            timezone="America/Los_Angeles",
+        )
+
+        response = client.post(
+            f"/api/reminders/{reminder_id}/action",
+            data=json.dumps({"action": "DELAY_2H"}),
+            content_type="application/json",
+        )
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["action"] == "DELAY_2H"
+        assert data["status"] == "scheduled"  # Snoozed reminders return to scheduled status
+        # Should be ~2 hours in future
+        assert data["due_at"] > now + (119 * 60)
+        assert data["due_at"] < now + (121 * 60)
+
+    def test_action_invalid_action(self, app_client):
+        """Test POST /api/reminders/<id>/action with invalid action."""
+        client, _, reminder_store = app_client
+
+        now = int(time.time())
+        reminder_id = reminder_store.add_reminder(
+            kind="REMIND",
+            due_at=now + 3600,
+            message="Test reminder",
+        )
+
+        response = client.post(
+            f"/api/reminders/{reminder_id}/action",
+            data=json.dumps({"action": "INVALID"}),
+            content_type="application/json",
+        )
+
+        assert response.status_code == 400
+        data = response.get_json()
+        assert "Invalid action" in data["error"]
+
+    def test_action_reminder_not_found(self, app_client):
+        """Test POST /api/reminders/<id>/action with non-existent reminder."""
+        client, _, _ = app_client
+
+        response = client.post(
+            "/api/reminders/99999/action",
+            data=json.dumps({"action": "DONE"}),
+            content_type="application/json",
+        )
+
+        assert response.status_code == 404
+        data = response.get_json()
+        assert "not found" in data["error"].lower()
 
 
 # ==============================================================================

@@ -36,6 +36,13 @@ REMINDER_STATUSES = frozenset({"draft", "scheduled", "fired", "acknowledged", "s
 REMINDER_ACTIONS = frozenset({"DONE", "SNOOZE_30", "DELAY_2H", "EDIT_TIME"})
 REMINDER_SOURCES = frozenset({"webui", "phone", "voice", "other"})
 
+# Legacy source values that should be mapped to current sources
+_LEGACY_SOURCE_MAP = {
+    "manual_cli": "other",
+    "cli": "other",
+    "api": "other",
+}
+
 # Default action buttons for reminders
 DEFAULT_ACTIONS = ["DONE", "SNOOZE_30", "DELAY_2H"]
 
@@ -801,6 +808,10 @@ class ReminderStore:
             except (KeyError, IndexError):
                 return default
 
+        # Normalize legacy source values to current allowed sources
+        raw_source = safe_get(row, "source", "other")
+        source = _LEGACY_SOURCE_MAP.get(raw_source, raw_source)
+
         return Reminder(
             id=int(row["id"]),
             kind=row["kind"],
@@ -817,7 +828,7 @@ class ReminderStore:
             priority=safe_get(row, "priority", "med"),
             status=safe_get(row, "status", "scheduled"),
             actions=_deserialize_list(safe_get(row, "actions", "[]")) or list(DEFAULT_ACTIONS),
-            source=safe_get(row, "source", "other"),
+            source=source,
             updated_at=safe_get(row, "updated_at"),
             audit_log=_deserialize_list(safe_get(row, "audit_log", "[]")),
             # Phase 2C field

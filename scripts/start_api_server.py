@@ -21,12 +21,9 @@ import requests
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_sock import Sock
-from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
-
-load_dotenv(dotenv_path=ROOT_DIR / ".env")
 
 from agents.cortex import CORTEX
 from agents.frontier import FRONTIER
@@ -34,7 +31,7 @@ from agents.nexus import NEXUS
 from goals.api import add_goal, list_goals
 from memory.init_db import create_schema, get_client
 from memory.operations import MemoryOperations
-from milton_orchestrator.state_paths import resolve_state_dir
+from milton_orchestrator.state_paths import resolve_state_dir, resolve_reminders_db_path
 from milton_orchestrator.input_normalizer import normalize_incoming_input
 from milton_orchestrator.reminders import ReminderStore, parse_time_expression, deliver_ntfy, format_timestamp_local
 from storage.briefing_store import BriefingStore
@@ -45,30 +42,134 @@ logging.basicConfig(
 )
 logger = logging.getLogger("milton.api")
 
-MODEL_URL = os.getenv("LLM_API_URL") or os.getenv(
-    "OLLAMA_API_URL", "http://localhost:8000"
-)
-MODEL_NAME = os.getenv(
-    "LLM_MODEL", os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
-)
-LLM_API_KEY = (
-    os.getenv("LLM_API_KEY")
-    or os.getenv("VLLM_API_KEY")
-    or os.getenv("OLLAMA_API_KEY")
-)
-STATE_DIR = resolve_state_dir()
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Parse boolean from environment variable."""
+    val = os.getenv(name, "").lower()
+    if val in ("1", "true", "yes", "on"):
+        return True
+    if val in ("0", "false", "no", "off", ""):
+        return default
+    return default
+
+
+# Module-level configuration (read from environment only, not .env file)
+# These exist at import time to support test patching with unittest.mock.patch()
+STATE_DIR = Path(os.getenv("MILTON_STATE_DIR") or os.getenv("STATE_DIR") or Path.home() / ".local/state/milton").resolve()
+MILTON_ACTION_TOKEN = os.getenv("MILTON_ACTION_TOKEN", "").strip() or None
+MILTON_REQUIRE_ACTION_TOKEN = _env_bool("MILTON_REQUIRE_ACTION_TOKEN", False)
+MILTON_PUBLIC_BASE_URL = os.getenv("MILTON_PUBLIC_BASE_URL", "").strip() or None
+MODEL_URL = os.getenv("MODEL_URL", "http://localhost:8000")
 NTFY_BASE_URL = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
 ANSWER_TOPIC = os.getenv("ANSWER_TOPIC", "milton-briefing-code")
-MILTON_PUBLIC_BASE_URL = os.getenv("MILTON_PUBLIC_BASE_URL")
-MILTON_ACTION_TOKEN = os.getenv("MILTON_ACTION_TOKEN")  # Optional bearer token for action callbacks
 
-# Initialize persistent stores
-briefing_store = BriefingStore(STATE_DIR / "briefing.sqlite3")
-reminder_store = ReminderStore(STATE_DIR / "reminders.sqlite3")
+# Import-time security checks (environment-only, no .env)
+if MILTON_REQUIRE_ACTION_TOKEN and not MILTON_ACTION_TOKEN:
+    raise ValueError(
+        "MILTON_REQUIRE_ACTION_TOKEN is enabled but MILTON_ACTION_TOKEN is not set. "
+        "Set MILTON_ACTION_TOKEN to a secure random string, or disable enforcement "
+        "by unsetting MILTON_REQUIRE_ACTION_TOKEN."
+    )
 
+if MILTON_PUBLIC_BASE_URL and not MILTON_ACTION_TOKEN:
+    logger.warning(
+        "⚠️  SECURITY WARNING: MILTON_PUBLIC_BASE_URL is set but MILTON_ACTION_TOKEN is not. "
+        "Reminder action callbacks will be open to anyone who can reach the URL. "
+        "For production deployments, set MILTON_ACTION_TOKEN to a secure random string."
+    )
+
+# Module-level stores (initialized by create_app or set by tests)
+briefing_store = None
+reminder_store = None
+
+# Create Flask app (but don't initialize stores yet)
 app = Flask(__name__)
 CORS(app)
 sock = Sock(app)
+
+
+def create_app(load_env: bool = True) -> Flask:
+    """Initialize the Flask app with configuration from environment.
+    
+    This factory function allows tests to control environment loading and
+    makes token enforcement explicit and configurable.
+    
+    Args:
+        load_env: If True, load from .env file before reading environment.
+                  If False, skip .env file loading (for tests that set env directly).
+    
+    Returns:
+        Configured Flask app
+    
+    Raises:
+        ValueError: If MILTON_REQUIRE_ACTION_TOKEN is True but token is not set
+    """
+    global briefing_store, reminder_store
+    
+    # Load environment variables from .env if requested
+    if load_env:
+        from dotenv import load_dotenv
+        load_dotenv(dotenv_path=ROOT_DIR / ".env")
+    
+    # Always read configuration from current environment (not module-level globals)
+    # Module-level globals are only for tests that patch them directly without create_app
+    model_url = os.getenv("LLM_API_URL") or os.getenv("OLLAMA_API_URL", "http://localhost:8000")
+    model_name = os.getenv("LLM_MODEL", os.getenv("OLLAMA_MODEL", "meta-llama/Llama-3.1-8B-Instruct"))
+    llm_api_key = os.getenv("LLM_API_KEY") or os.getenv("VLLM_API_KEY") or os.getenv("OLLAMA_API_KEY")
+    state_dir = resolve_state_dir()
+    ntfy_base_url = os.getenv("NTFY_BASE_URL", "https://ntfy.sh")
+    answer_topic = os.getenv("ANSWER_TOPIC", "milton-briefing-code")
+    milton_public_base_url = os.getenv("MILTON_PUBLIC_BASE_URL", "").strip() or None
+    milton_action_token = os.getenv("MILTON_ACTION_TOKEN", "").strip() or None
+    milton_require_action_token = _env_bool("MILTON_REQUIRE_ACTION_TOKEN", False)
+    
+    # Store config in app.config for access by endpoints
+    app.config["MODEL_URL"] = model_url
+    app.config["MODEL_NAME"] = model_name
+    app.config["LLM_API_KEY"] = llm_api_key
+    app.config["STATE_DIR"] = state_dir
+    app.config["NTFY_BASE_URL"] = ntfy_base_url
+    app.config["ANSWER_TOPIC"] = answer_topic
+    app.config["MILTON_PUBLIC_BASE_URL"] = milton_public_base_url
+    app.config["MILTON_ACTION_TOKEN"] = milton_action_token
+    app.config["MILTON_REQUIRE_ACTION_TOKEN"] = milton_require_action_token
+    
+    # Security validation
+    if milton_require_action_token and not milton_action_token:
+        raise ValueError(
+            "MILTON_REQUIRE_ACTION_TOKEN is enabled but MILTON_ACTION_TOKEN is not set. "
+            "Set MILTON_ACTION_TOKEN to a secure random string, or disable enforcement "
+            "by unsetting MILTON_REQUIRE_ACTION_TOKEN."
+        )
+    
+    # Security warning for public endpoints without authentication
+    if milton_public_base_url and not milton_action_token and not milton_require_action_token:
+        logger.warning(
+            "⚠️  SECURITY WARNING: MILTON_PUBLIC_BASE_URL is set but MILTON_ACTION_TOKEN is not. "
+            "Reminder action callbacks will be open to anyone who can reach the URL. "
+            "For production deployments, set MILTON_ACTION_TOKEN to a secure random string."
+        )
+    
+    # Initialize persistent stores if not already set (e.g., by tests)
+    if briefing_store is None:
+        briefing_store = BriefingStore(state_dir / "briefing.sqlite3")
+    if reminder_store is None:
+        reminder_store = ReminderStore(resolve_reminders_db_path())
+        logger.info(f"Reminder store initialized at: {resolve_reminders_db_path()}")
+    
+    # Initialize agents with config
+    global nexus, cortex, frontier, AGENT_MAP
+    nexus = NEXUS(model_url=model_url, model_name=model_name)
+    cortex = CORTEX(model_url=model_url, model_name=model_name)
+    frontier = FRONTIER(model_url=model_url, model_name=model_name)
+    
+    AGENT_MAP = {
+        "NEXUS": nexus,
+        "CORTEX": cortex,
+        "FRONTIER": frontier,
+    }
+    
+    return app
 
 _REQUESTS: Dict[str, Dict[str, Any]] = {}
 _REQUESTS_LOCK = threading.Lock()
@@ -95,15 +196,11 @@ _STATUS_CACHE: Dict[str, Any] = {"timestamp": 0.0, "llm_up": True, "weaviate_up"
 _SCHEMA_READY = False
 _SCHEMA_LOCK = threading.Lock()
 
-nexus = NEXUS(model_url=MODEL_URL, model_name=MODEL_NAME)
-cortex = CORTEX(model_url=MODEL_URL, model_name=MODEL_NAME)
-frontier = FRONTIER(model_url=MODEL_URL, model_name=MODEL_NAME)
-
-AGENT_MAP = {
-    "NEXUS": nexus,
-    "CORTEX": cortex,
-    "FRONTIER": frontier,
-}
+# Agent instances (initialized by create_app)
+nexus = None
+cortex = None
+frontier = None
+AGENT_MAP = {}
 
 
 def _now_iso() -> str:
@@ -1243,10 +1340,25 @@ def reminder_action(reminder_id: int) -> Any:
     try:
         data = request.get_json(silent=True) or {}
         
-        # Check token if required
-        if MILTON_ACTION_TOKEN:
+        # Check token enforcement - use app.config if set by create_app(),
+        # otherwise fall back to module globals (for legacy tests that patch globals directly)
+        # App.config is only reliable if "STATE_DIR" key exists (set by create_app)
+        config_initialized = "STATE_DIR" in app.config
+        
+        if config_initialized:
+            require_token = app.config.get("MILTON_REQUIRE_ACTION_TOKEN", False)
+            action_token = app.config.get("MILTON_ACTION_TOKEN")
+        else:
+            # Legacy test path: use module globals
+            require_token = MILTON_REQUIRE_ACTION_TOKEN
+            action_token = MILTON_ACTION_TOKEN
+        
+        # Enforce token if either:
+        # 1. Strict mode is enabled (MILTON_REQUIRE_ACTION_TOKEN=true)
+        # 2. Token is set (even in non-strict mode, enforce it if configured)
+        if require_token or action_token:
             provided_token = data.get("token", "").strip()
-            if not provided_token or provided_token != MILTON_ACTION_TOKEN:
+            if not provided_token or provided_token != action_token:
                 logger.warning(f"Action token mismatch for reminder {reminder_id}")
                 return jsonify({"error": "Unauthorized: invalid or missing token"}), 401
         
@@ -1282,7 +1394,7 @@ def reminder_action(reminder_id: int) -> Any:
                 actor="user_ntfy",
                 details="User clicked SNOOZE_30 button via ntfy"
             )
-            new_status = "snoozed"
+            new_status = "scheduled"  # Snoozed reminders return to scheduled status
             # Get updated due_at
             updated_reminder = reminder_store.get_reminder(reminder_id)
             new_due_at = updated_reminder.due_at if updated_reminder else None
@@ -1296,7 +1408,7 @@ def reminder_action(reminder_id: int) -> Any:
                 actor="user_ntfy",
                 details="User clicked DELAY_2H button via ntfy"
             )
-            new_status = "snoozed"
+            new_status = "scheduled"  # Snoozed reminders return to scheduled status
             # Get updated due_at
             updated_reminder = reminder_store.get_reminder(reminder_id)
             new_due_at = updated_reminder.due_at if updated_reminder else None
@@ -1318,13 +1430,21 @@ def reminder_action(reminder_id: int) -> Any:
         # Send confirmation notification via ntfy
         confirmation_sent = False
         try:
+            # Use same config resolution as token enforcement above
+            if config_initialized:
+                ntfy_base_url = app.config.get("NTFY_BASE_URL", "https://ntfy.sh")
+                answer_topic = app.config.get("ANSWER_TOPIC", "milton-briefing-code")
+            else:
+                ntfy_base_url = NTFY_BASE_URL
+                answer_topic = ANSWER_TOPIC
+            
             # Create a simple confirmation reminder object (we just need the message)
             # We'll use deliver_ntfy but without action buttons for the confirmation
             confirmation_title = f"Reminder {reminder_id}: {action}"
 
             # Use requests directly for confirmation (simpler than deliver_ntfy)
             response = requests.post(
-                f"{NTFY_BASE_URL}/{ANSWER_TOPIC}",
+                f"{ntfy_base_url}/{answer_topic}",
                 data=confirmation_msg.encode("utf-8"),
                 headers={
                     "Title": confirmation_title,
@@ -1423,6 +1543,9 @@ def reminder_health() -> Any:
 
 
 if __name__ == "__main__":
+    # Initialize app with environment loading
+    create_app(load_env=True)
+    
     # Allow port to be configured via environment variable
     api_port = int(os.getenv("MILTON_API_PORT", "8001"))
     logger.info(f"Starting Milton API server at http://localhost:{api_port}")

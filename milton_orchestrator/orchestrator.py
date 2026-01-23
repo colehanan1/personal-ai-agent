@@ -29,6 +29,7 @@ from .reminders import (
     format_timestamp_local,
     parse_reminder_command,
 )
+from .state_paths import resolve_reminders_db_path
 from .self_upgrade_entry import process_self_upgrade_request
 
 logger = logging.getLogger(__name__)
@@ -96,7 +97,8 @@ class Orchestrator:
         self.reminder_store = None
         self.reminder_scheduler = None
         if config.enable_reminders:
-            self.reminder_store = ReminderStore(config.state_dir / "reminders.sqlite3")
+            self.reminder_store = ReminderStore(resolve_reminders_db_path())
+            logger.info(f"Reminder store initialized at: {resolve_reminders_db_path()}")
 
             def reminder_publish_fn(message: str, title: str, reminder_id: int) -> bool:
                 """Publish reminder via ntfy."""

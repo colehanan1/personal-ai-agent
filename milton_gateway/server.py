@@ -3,11 +3,13 @@
 import json
 import logging
 import os
+import re
 import time
 import uuid
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator, Mapping
+from typing import Any, AsyncIterator, Mapping, Optional
 
 from dotenv import load_dotenv
 
@@ -21,8 +23,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .llm_client import LLMClient
+from milton_orchestrator.state_paths import resolve_state_dir
 from .command_processor import CommandProcessor, CommandResult
 from .models import (
+    AddMemoryRequest,
+    AddSnapshotRequest,
     ChatCompletionChunk,
     ChatCompletionRequest,
     ChatCompletionResponse,
@@ -31,9 +36,16 @@ from .models import (
     DeltaContent,
     ErrorDetail,
     ErrorResponse,
+    MemoryListResponse,
+    MemoryOperationResponse,
+    MemoryResponse,
     ModelInfo,
     ModelsResponse,
+    SnapshotListResponse,
+    SnapshotOperationResponse,
+    SnapshotResponse,
     StreamChoice,
+    UpdateMemoryRequest,
     UsageInfo,
 )
 
@@ -54,6 +66,8 @@ _THREAD_ID_HEADER_KEYS = (
     "x-session-id",
     "x-client-id",
 )
+
+_ACTION_INTERNAL_TAG = "[[MILTON_INTERNAL]]"
 
 
 # Configuration from environment
@@ -187,10 +201,49 @@ execute arbitrary code, or access services beyond the Milton API."""
     return MILTON_SYSTEM_PROMPT
 
 
-# Global LLM client and command processor instances
+# Global LLM client, command processor, and memory store instances
 _llm_client: LLMClient | None = None
 _command_processor: CommandProcessor | None = None
 _memory_store = None
+_declarative_memory_store = None
+_activity_snapshot_store = None
+
+
+def get_activity_snapshot_store():
+    """Get or initialize the activity snapshot store."""
+    global _activity_snapshot_store
+    if _activity_snapshot_store is None:
+        from milton_orchestrator.activity_snapshots import ActivitySnapshotStore
+        from milton_orchestrator.state_paths import resolve_state_dir
+        import os
+        
+        state_dir = resolve_state_dir()
+        db_path = state_dir / "activity_snapshots.sqlite3"
+        
+        # Get retention settings from environment
+        retention_days = os.getenv("ACTIVITY_RETENTION_DAYS")
+        max_per_device = os.getenv("ACTIVITY_MAX_PER_DEVICE")
+        
+        _activity_snapshot_store = ActivitySnapshotStore(
+            db_path,
+            retention_days=int(retention_days) if retention_days else None,
+            max_per_device=int(max_per_device) if max_per_device else None,
+        )
+        logger.info(f"Initialized activity snapshot store at {db_path}")
+    return _activity_snapshot_store
+
+
+def get_declarative_memory_store():
+    """Get or initialize the declarative memory store."""
+    global _declarative_memory_store
+    if _declarative_memory_store is None:
+        from milton_orchestrator.declarative_memory import DeclarativeMemoryStore
+        from milton_orchestrator.state_paths import resolve_state_dir
+        state_dir = resolve_state_dir()
+        db_path = state_dir / "declarative_memory.sqlite3"
+        _declarative_memory_store = DeclarativeMemoryStore(db_path)
+        logger.info(f"Initialized declarative memory store at {db_path}")
+    return _declarative_memory_store
 
 
 def get_memory_store():
@@ -260,13 +313,17 @@ async def lifespan(app: FastAPI):
     logger.info(f"Milton API: {config['milton_api_url']}")
     yield
     # Cleanup
-    global _llm_client, _command_processor, _memory_store
+    global _llm_client, _command_processor, _memory_store, _declarative_memory_store, _activity_snapshot_store
     if _llm_client is not None:
         await _llm_client.close()
     if _command_processor is not None:
         await _command_processor.close()
     if _memory_store is not None:
         _memory_store.close()
+    if _declarative_memory_store is not None:
+        _declarative_memory_store.close()
+    if _activity_snapshot_store is not None:
+        _activity_snapshot_store.close()
     logger.info("Milton Chat Gateway shut down.")
 
 
@@ -329,6 +386,40 @@ async def health_check():
     }
 
 
+@app.get("/memory/status")
+async def memory_status():
+    """
+    Memory system status endpoint.
+
+    Returns memory backend mode, availability, degradation state,
+    and last retrieval statistics.
+    """
+    from memory.status import get_memory_status
+
+    status = get_memory_status()
+
+    response = {
+        "mode": status.mode,
+        "backend_available": status.backend_available,
+        "degraded": status.degraded,
+        "detail": status.detail,
+        "warnings": status.warnings,
+    }
+
+    if status.last_retrieval:
+        response["last_retrieval"] = {
+            "query": status.last_retrieval.query,
+            "count": status.last_retrieval.count,
+            "timestamp": status.last_retrieval.timestamp.isoformat(),
+            "mode": status.last_retrieval.mode,
+            "duration_ms": status.last_retrieval.duration_ms,
+        }
+    else:
+        response["last_retrieval"] = None
+
+    return response
+
+
 @app.get("/v1/models")
 async def list_models() -> ModelsResponse:
     """List available models (OpenAI-compatible)."""
@@ -377,61 +468,147 @@ async def chat_completions(
     logger.debug(f"Thread ID: {thread_id} (source: {thread_source})")
 
     # Check if the last user message is a command
+    action_summary = None
+    skip_auto_store = False
+
     if messages and messages[-1]["role"] == "user":
         user_message = messages[-1]["content"]
-        command_result = await command_processor.process_message(user_message)
-        
-        if command_result.is_command:
-            # This was a command - return the result directly without calling LLM
-            if command_result.error:
-                response_text = f"❌ Error: {command_result.error}"
-            else:
-                response_text = command_result.response
-            
-            logger.info(f"Command processed: {user_message[:50]}... -> {response_text[:50]}...")
-            
-            # Store command and response in conversation history
-            try:
-                memory_store.append_turn(thread_id, "user", user_message)
-                memory_store.append_turn(thread_id, "assistant", response_text)
-            except Exception as e:
-                logger.warning(f"Failed to store command in conversation history: {e}")
-            
-            return ChatCompletionResponse(
-                model=config["model_id"],
-                choices=[
-                    ChatCompletionChoice(
-                        index=0,
-                        message=ChatMessage(role="assistant", content=response_text),
-                        finish_reason="stop",
-                    )
-                ],
-                usage=UsageInfo(
-                    prompt_tokens=0,
-                    completion_tokens=0,
-                    total_tokens=0,
-                ),
+
+        logger.info(f"🔍 Processing user message: {user_message[:100]}...")
+
+        # Skip internal system prompts and internal tags
+        skip_planning = (
+            user_message.strip().startswith("### Task:")
+            or _ACTION_INTERNAL_TAG in user_message
+        )
+
+        if user_message.strip().startswith("/"):
+            # Set session_id for the command processor
+            command_processor.session_id = thread_id
+            command_result = await command_processor.process_message(user_message)
+
+            if command_result.is_command:
+                # This was a command - return the result directly without calling LLM
+                if command_result.error:
+                    response_text = f"❌ Error: {command_result.error}"
+                else:
+                    response_text = command_result.response
+
+                logger.info(f"Command processed: {user_message[:50]}... -> {response_text[:50]}...")
+
+                # Store command and response in conversation history
+                try:
+                    memory_store.append_turn(thread_id, "user", user_message)
+                    memory_store.append_turn(thread_id, "assistant", response_text)
+                except Exception as e:
+                    logger.warning(f"Failed to store command in conversation history: {e}")
+
+                return ChatCompletionResponse(
+                    model=config["model_id"],
+                    choices=[
+                        ChatCompletionChoice(
+                            index=0,
+                            message=ChatMessage(role="assistant", content=response_text),
+                            finish_reason="stop",
+                        )
+                    ],
+                    usage=UsageInfo(
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                    ),
+                )
+
+        if not skip_planning:
+            from milton_gateway.action_planner import extract_action_plan
+            from milton_gateway.action_executor import execute_action_plan
+
+            plan = extract_action_plan(
+                user_message,
+                datetime.now(timezone.utc).isoformat(),
+                "America/Chicago",
             )
+            if plan.get("action") == "CLARIFY":
+                question = plan.get("payload", {}).get("question", "Could you clarify?")
+                response_text = question
+                try:
+                    memory_store.append_turn(thread_id, "user", user_message)
+                    memory_store.append_turn(thread_id, "assistant", response_text)
+                except Exception as e:
+                    logger.warning(f"Failed to store clarification in conversation history: {e}")
+
+                return ChatCompletionResponse(
+                    model=config["model_id"],
+                    choices=[
+                        ChatCompletionChoice(
+                            index=0,
+                            message=ChatMessage(role="assistant", content=response_text),
+                            finish_reason="stop",
+                        )
+                    ],
+                    usage=UsageInfo(
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                    ),
+                )
+
+            if plan.get("action") != "NOOP":
+                exec_result = execute_action_plan(
+                    plan,
+                    {"timezone": "America/Chicago", "state_dir": str(resolve_state_dir())},
+                )
+                action_summary = _format_action_summary(plan, exec_result)
+                skip_auto_store = True
 
     # Not a command - proceed with normal LLM flow
     # Inject system prompt if not already present
     has_system = any(m["role"] == "system" for m in messages)
     if not has_system:
         system_prompt = load_system_prompt()
-        
-        # Load recent conversation history and memory facts
+
+        # Extract user query for memory retrieval
+        user_query = messages[-1]["content"] if messages and messages[-1]["role"] == "user" else ""
+
+        # Load recent conversation history, memory facts, and semantic memory
         try:
-            history_context = _build_history_context(memory_store, thread_id)
+            history_context = _build_history_context(memory_store, thread_id, user_query=user_query)
             if history_context:
                 system_prompt = f"{system_prompt}\n\n{history_context}"
         except Exception as e:
             logger.warning(f"Failed to load conversation history: {e}")
-        
+
         messages.insert(0, {"role": "system", "content": system_prompt})
         logger.debug("Injected Milton system prompt with conversation history")
+    
+    # Check if conversation needs summarization
+    from .conversation_summarizer import should_summarize, summarize_conversation
+    
+    if should_summarize(messages, max_tokens=8192):
+        logger.info("Conversation approaching context limit, summarizing...")
+        try:
+            messages, summary = await summarize_conversation(messages, llm_client, keep_recent=10)
+            logger.info(f"Summarized conversation: {len(messages)} messages remain")
+        except Exception as e:
+            logger.error(f"Failed to summarize conversation: {e}")
+            # Continue with original messages
 
     # Use default max_tokens if not specified
     max_tokens = chat_request.max_tokens or config["max_tokens_default"]
+    
+    # Cap max_tokens to prevent context overflow
+    # Rough estimate: 1 token ≈ 4 chars, leave 20% buffer for model context (8192 for llama)
+    model_max_context = 8192
+    estimated_input_tokens = sum(len(msg.get("content", "")) for msg in messages) // 4
+    safe_max_tokens = min(max_tokens, model_max_context - estimated_input_tokens - 200)
+    
+    if safe_max_tokens < 100:
+        safe_max_tokens = 100  # Minimum reasonable response
+        logger.warning(f"Input very large ({estimated_input_tokens} tokens), capping output to {safe_max_tokens}")
+    elif safe_max_tokens < max_tokens:
+        logger.info(f"Reduced max_tokens from {max_tokens} to {safe_max_tokens} to fit context window")
+    
+    max_tokens = safe_max_tokens
 
     logger.info(
         f"Chat request: model={chat_request.model}, messages={len(messages)}, "
@@ -448,6 +625,8 @@ async def chat_completions(
                 config["model_id"],
                 thread_id,
                 memory_store,
+                action_summary=action_summary,
+                skip_auto_store=skip_auto_store,
             ),
             media_type="text/event-stream",
             headers={
@@ -473,39 +652,276 @@ async def chat_completions(
             config["model_id"],
             thread_id,
             memory_store,
+            action_summary=action_summary,
+            skip_auto_store=skip_auto_store,
         )
 
 
-def _build_history_context(memory_store, thread_id: str, max_turns: int = 10) -> str:
-    """Build conversation history context for system prompt.
+def _build_memory_retrieval_context(user_query: str, max_items: int = 5) -> str:
+    """
+    Build memory context from retrieval system (Weaviate/JSONL).
+
+    This queries the semantic memory store and records retrieval stats.
+    Controlled by MILTON_GATEWAY_MEMORY_RETRIEVAL env var (default: enabled).
+
+    Args:
+        user_query: User's message to query against
+        max_items: Maximum number of memory items to retrieve
+
+    Returns:
+        Formatted memory context string, or empty string if disabled/failed
+    """
+    # Check if memory retrieval is enabled (default: yes)
+    enabled = os.getenv("MILTON_GATEWAY_MEMORY_RETRIEVAL", "1").lower() in ("1", "true", "yes", "on")
+    if not enabled:
+        logger.debug("Memory retrieval disabled via MILTON_GATEWAY_MEMORY_RETRIEVAL=0")
+        return ""
+
+    try:
+        from memory.retrieve import query_relevant_hybrid
+        from memory.status import record_retrieval
+
+        # Query semantic memory
+        memories = query_relevant_hybrid(
+            user_query,
+            limit=max_items,
+            recency_bias=0.5,
+            semantic_weight=0.5,
+            mode="hybrid",
+        )
+
+        # Record retrieval stats (makes /memory/status observable)
+        record_retrieval(query=user_query, count=len(memories), mode="hybrid")
+
+        if not memories:
+            logger.debug("No relevant memories found")
+            return ""
+
+        # Format memory context
+        parts = ["", "### Relevant Memory Context:", ""]
+        for mem in memories:
+            # Truncate long content
+            content = mem.content if len(mem.content) <= 150 else mem.content[:150] + "..."
+            parts.append(f"- {content}")
+
+        logger.info(f"Retrieved {len(memories)} memory items for query: {user_query[:50]}...")
+        return "\n".join(parts)
+
+    except Exception as e:
+        logger.warning(f"Memory retrieval failed: {e}")
+        # Record failed retrieval
+        try:
+            from memory.status import record_retrieval
+            record_retrieval(query=user_query, count=0, mode="error")
+        except:
+            pass
+        return ""
+
+
+async def _auto_store_facts(assistant_response: str, user_message: str, thread_id: str):
+    """Automatically extract and store facts when assistant claims to store something.
     
+    Args:
+        assistant_response: What Milton said
+        user_message: What user said
+        thread_id: Session/thread ID
+    """
+    try:
+        from .auto_fact_extractor import detect_storage_intent
+        import httpx
+        
+        cfg = get_config()
+        actions = detect_storage_intent(assistant_response, user_message)
+        
+        if not actions:
+            return
+        
+        logger.info(f"Auto-extracting {len(actions)} storage actions from conversation")
+        
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for action in actions:
+                if action["type"] == "memory":
+                    # Store fact via Milton API
+                    fact_data = action["data"]
+                    key = fact_data.get("key")
+                    value = fact_data.get("value")
+                    
+                    if key and value:
+                        try:
+                            response = await client.post(
+                                f"{cfg['milton_api_url']}/api/memory",
+                                json={"key": key, "value": value, "session_id": thread_id}
+                            )
+                            if response.is_success:
+                                logger.info(f"✓ Auto-stored fact: {key} = {value[:50]}...")
+                            else:
+                                logger.warning(f"Failed to store fact {key}: {response.status_code}")
+                        except Exception as e:
+                            logger.error(f"Error storing fact {key}: {e}")
+                
+                elif action["type"] == "reminder":
+                    # Create reminder via Milton API
+                    reminder_data = action["data"]
+                    text = reminder_data.get("text")
+                    time_expr = reminder_data.get("time_expression")
+                    
+                    if text and time_expr:
+                        try:
+                            # Parse time expression to due date
+                            import dateparser
+                            due_date = dateparser.parse(time_expr)
+                            
+                            if due_date:
+                                response = await client.post(
+                                    f"{cfg['milton_api_url']}/api/reminders",
+                                    json={
+                                        "text": text,
+                                        "due_date": due_date.isoformat(),
+                                        "channel": ["ntfy"]
+                                    }
+                                )
+                                if response.is_success:
+                                    logger.info(f"✓ Auto-created reminder: {text} @ {time_expr}")
+                                else:
+                                    logger.warning(f"Failed to create reminder: {response.status_code}")
+                        except Exception as e:
+                            logger.error(f"Error creating reminder: {e}")
+    
+    except Exception as e:
+        logger.error(f"Auto-storage failed: {e}")
+
+
+async def _smart_extract_and_store_facts(user_message: str, session_id: str):
+    """Automatically extract and store facts from user's natural conversation.
+    Also detects and creates reminders from natural language.
+    
+    Args:
+        user_message: What the user said
+        session_id: Session/thread ID
+    """
+    try:
+        from .smart_fact_extractor import extract_facts_from_message
+        from .reminder_detector import ReminderDetector
+        from storage.chat_memory import ChatMemoryStore
+        from milton_orchestrator.state_paths import resolve_state_dir
+        
+        # Extract facts from message
+        facts = extract_facts_from_message(user_message)
+        
+        if facts:
+            logger.info(f"📝 Smart extraction found {len(facts)} facts in message")
+            
+            # Store each fact
+            state_dir = resolve_state_dir()
+            memory_db = state_dir / "chat_memory.sqlite3"
+            memory_store = ChatMemoryStore(memory_db)
+            
+            for fact in facts:
+                key = fact["key"]
+                value = fact["value"]
+                category = fact.get("category", "general")
+                
+                try:
+                    # Store in memory store
+                    memory_store.upsert_fact(key, value)
+                    logger.info(f"✓ Auto-stored: {key} = {value[:50]}... [{category}]")
+                except Exception as e:
+                    logger.error(f"Failed to auto-store fact {key}: {e}")
+            
+            memory_store.close()
+        
+        # Check for reminder requests
+        detector = ReminderDetector()
+        reminder = detector.detect_reminder_request(user_message)
+        
+        if reminder:
+            logger.info(f"⏰ Detected reminder request: {reminder['type']} on {reminder['day']} at {reminder['time']}")
+            
+            # Create reminder via API
+            try:
+                # Build natural language time expression for API
+                # Format: "sunday 8am" (next occurrence)
+                day = reminder["day"]
+                time = reminder["time"]
+                
+                # Map time to hour
+                time_map = {"morning": "8am", "afternoon": "2pm", "evening": "6pm"}
+                hour = time_map.get(time.lower(), "8am")
+                
+                remind_at_expr = f"{day} {hour}"
+                
+                # Build reminder message
+                task = reminder["task"]
+                reminder_msg = f"Meal prep: {task}"
+                
+                # Create weekly reminder via internal API
+                import httpx
+                api_url = os.getenv("MILTON_API_URL", "http://localhost:8001")
+                
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{api_url}/api/reminders",
+                        json={
+                            "message": reminder_msg,
+                            "remind_at": remind_at_expr,
+                            "kind": "REMIND",
+                            "timezone": "America/New_York"
+                        },
+                        timeout=10.0
+                    )
+                    
+                    if response.status_code == 201:
+                        logger.info(f"✓ Created weekly reminder: {remind_at_expr}")
+                    else:
+                        logger.warning(f"Failed to create reminder: {response.status_code} - {response.text}")
+                        
+            except Exception as e:
+                logger.error(f"Error creating reminder: {e}")
+    
+    except Exception as e:
+        logger.error(f"Smart fact extraction/reminder detection failed: {e}")
+
+
+def _build_history_context(memory_store, thread_id: str, max_turns: int = 10, user_query: str = "") -> str:
+    """Build conversation history context for system prompt.
+
     Args:
         memory_store: ChatMemoryStore instance
         thread_id: Thread identifier
         max_turns: Maximum number of recent turns to include (default: 10)
-    
+        user_query: Optional user query for memory retrieval
+
     Returns:
         Formatted history context string, or empty string if no history
     """
     try:
         # Load recent conversation turns
         turns = memory_store.get_recent_turns(thread_id, limit=max_turns)
-        
+
         # Load memory facts
         facts = memory_store.get_all_facts()
-        
-        if not turns and not facts:
+
+        # Load semantic memory (if enabled)
+        memory_context = ""
+        if user_query:
+            memory_context = _build_memory_retrieval_context(user_query)
+
+        if not turns and not facts and not memory_context:
             return ""
-        
+
         parts = ["---", "", "## CONVERSATION MEMORY"]
-        
+
         # Add explicit memory facts
         if facts:
             parts.append("")
             parts.append("### Stored Facts (via /remember):")
             for fact in facts:
                 parts.append(f"- **{fact.key}**: {fact.value}")
-        
+
+        # Add semantic memory retrieval
+        if memory_context:
+            parts.append(memory_context)
+
         # Add recent conversation history
         if turns:
             parts.append("")
@@ -518,12 +934,42 @@ def _build_history_context(memory_store, thread_id: str, max_turns: int = 10) ->
             parts.append("```")
             parts.append("")
             parts.append("*You can reference this history naturally in your responses.*")
-        
+
         return "\n".join(parts)
-    
+
     except Exception as e:
         logger.exception(f"Error building history context: {e}")
         return ""
+
+
+def _format_action_summary(plan: dict, exec_result: dict) -> str:
+    """Create a short action summary for the user."""
+    if not isinstance(exec_result, dict) or exec_result.get("status") != "ok":
+        return "Action summary: Unable to execute the requested action."
+
+    action = plan.get("action")
+    payload = plan.get("payload") or {}
+
+    if action == "CREATE_MEMORY":
+        key = _summary_text(payload.get("key") or "memory")
+        return f"Action summary: Saved memory: {key}"
+    if action == "CREATE_REMINDER":
+        title = _summary_text(payload.get("title") or "reminder")
+        when = _summary_text(payload.get("when") or "")
+        if when:
+            return f"Action summary: Created reminder: {title} ({when})"
+        return f"Action summary: Created reminder: {title}"
+    if action == "CREATE_GOAL":
+        title = _summary_text(payload.get("title") or "goal")
+        return f"Action summary: Added goal: {title}"
+
+    return "Action summary: Action completed."
+
+
+def _summary_text(value: Any) -> str:
+    text = str(value or "").replace("\n", " ").replace("\r", " ").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text.encode("ascii", "ignore").decode("ascii")
 
 
 async def blocking_chat_response(
@@ -534,6 +980,8 @@ async def blocking_chat_response(
     model_id: str,
     thread_id: str,
     memory_store,
+    action_summary: str | None = None,
+    skip_auto_store: bool = False,
 ) -> ChatCompletionResponse:
     """Generate a non-streaming chat response."""
     try:
@@ -546,7 +994,20 @@ async def blocking_chat_response(
 
         # Extract the assistant's response
         content = result["choices"][0]["message"]["content"]
+        base_content = content
+        if action_summary:
+            content = f"{content}\n\n{action_summary}"
         usage = result.get("usage", {})
+        
+        # AUTO-EXTRACT FACTS: Check if assistant mentioned storing something
+        user_message = ""
+        for msg in reversed(messages):
+            if msg["role"] == "user":
+                user_message = msg["content"]
+                break
+        
+        if not skip_auto_store:
+            await _auto_store_facts(base_content, user_message, thread_id)
         
         # Store conversation turn in memory
         try:
@@ -555,7 +1016,7 @@ async def blocking_chat_response(
                 if msg["role"] == "user":
                     memory_store.append_turn(thread_id, "user", msg["content"])
                     break
-            memory_store.append_turn(thread_id, "assistant", content)
+                memory_store.append_turn(thread_id, "assistant", content)
         except Exception as e:
             logger.warning(f"Failed to store conversation turn: {e}")
 
@@ -593,6 +1054,8 @@ async def stream_chat_response(
     model_id: str,
     thread_id: str,
     memory_store,
+    action_summary: str | None = None,
+    skip_auto_store: bool = False,
 ) -> AsyncIterator[str]:
     """
     Generate a streaming chat response using SSE.
@@ -668,6 +1131,22 @@ async def stream_chat_response(
                 logger.warning(f"Failed to parse streaming chunk: {data}")
                 continue
 
+        if action_summary:
+            summary_chunk = ChatCompletionChunk(
+                id=completion_id,
+                created=created,
+                model=model_id,
+                choices=[
+                    StreamChoice(
+                        index=0,
+                        delta=DeltaContent(content=f"\n\n{action_summary}"),
+                        finish_reason=None,
+                    )
+                ],
+            )
+            yield f"data: {summary_chunk.model_dump_json()}\n\n"
+            accumulated_content.append(f"\n\n{action_summary}")
+
         # Final chunk with finish_reason
         final_chunk = ChatCompletionChunk(
             id=completion_id,
@@ -689,11 +1168,17 @@ async def stream_chat_response(
             full_response = "".join(accumulated_content)
             if full_response:
                 # Find last user message to store
+                user_message = ""
                 for msg in reversed(messages):
                     if msg["role"] == "user":
-                        memory_store.append_turn(thread_id, "user", msg["content"])
+                        user_message = msg["content"]
+                        memory_store.append_turn(thread_id, "user", user_message)
                         break
                 memory_store.append_turn(thread_id, "assistant", full_response)
+                
+                # AUTO-EXTRACT FACTS: Check if assistant mentioned storing something
+                if not skip_auto_store:
+                    await _auto_store_facts(full_response, user_message, thread_id)
         except Exception as e:
             logger.warning(f"Failed to store streaming conversation turn: {e}")
 
@@ -723,6 +1208,401 @@ async def stream_chat_response(
 def create_app() -> FastAPI:
     """Factory function to create the FastAPI app."""
     return app
+
+
+# Declarative Memory API Endpoints
+@app.post("/v1/memory/declarative")
+async def add_declarative_memory(request: AddMemoryRequest) -> MemoryOperationResponse:
+    """
+    Add a new declarative memory (user-stated fact or intent).
+    
+    Args:
+        request: Memory creation request
+        
+    Returns:
+        Operation response with memory ID
+    """
+    try:
+        store = get_declarative_memory_store()
+        memory_id = store.add_memory(
+            content=request.content,
+            tags=request.tags,
+            source=request.source,
+            confidence=request.confidence,
+            context_ref=request.context_ref,
+        )
+        logger.info(f"Added declarative memory {memory_id}")
+        return MemoryOperationResponse(
+            success=True,
+            message="Memory added successfully",
+            memory_id=memory_id,
+        )
+    except ValueError as e:
+        logger.warning(f"Validation error adding memory: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error adding declarative memory: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add memory")
+
+
+@app.get("/v1/memory/declarative")
+async def list_declarative_memories(limit: int = 100) -> MemoryListResponse:
+    """
+    List all declarative memories, newest first.
+    
+    Args:
+        limit: Maximum number of results (default 100)
+        
+    Returns:
+        List of memories
+    """
+    try:
+        store = get_declarative_memory_store()
+        memories = store.list_memories(limit=limit)
+        return MemoryListResponse(
+            memories=[
+                MemoryResponse(
+                    id=m.id,
+                    content=m.content,
+                    tags=m.tags,
+                    source=m.source,
+                    confidence=m.confidence,
+                    context_ref=m.context_ref,
+                    created_at=m.created_at,
+                    updated_at=m.updated_at,
+                )
+                for m in memories
+            ],
+            count=len(memories),
+        )
+    except Exception as e:
+        logger.error(f"Error listing memories: {e}")
+        raise HTTPException(status_code=500, detail="Failed to list memories")
+
+
+@app.get("/v1/memory/declarative/search")
+async def search_declarative_memory(
+    query: Optional[str] = None,
+    tags: Optional[str] = None,  # Comma-separated list
+    limit: int = 100,
+) -> MemoryListResponse:
+    """
+    Search declarative memories by content and/or tags.
+    
+    Args:
+        query: Optional keyword to search in content
+        tags: Optional comma-separated list of tags to filter by
+        limit: Maximum number of results (default 100)
+        
+    Returns:
+        List of matching memories
+    """
+    try:
+        store = get_declarative_memory_store()
+        tag_list = [t.strip() for t in tags.split(",")] if tags else None
+        memories = store.search_memory(query=query, tags=tag_list, limit=limit)
+        return MemoryListResponse(
+            memories=[
+                MemoryResponse(
+                    id=m.id,
+                    content=m.content,
+                    tags=m.tags,
+                    source=m.source,
+                    confidence=m.confidence,
+                    context_ref=m.context_ref,
+                    created_at=m.created_at,
+                    updated_at=m.updated_at,
+                )
+                for m in memories
+            ],
+            count=len(memories),
+        )
+    except Exception as e:
+        logger.error(f"Error searching memories: {e}")
+        raise HTTPException(status_code=500, detail="Failed to search memories")
+
+
+@app.get("/v1/memory/declarative/{memory_id}")
+async def get_declarative_memory(memory_id: str) -> MemoryResponse:
+    """
+    Get a declarative memory by ID.
+    
+    Args:
+        memory_id: The memory ID
+        
+    Returns:
+        Memory data
+    """
+    try:
+        store = get_declarative_memory_store()
+        memory = store.get_memory(memory_id)
+        if memory is None:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return MemoryResponse(
+            id=memory.id,
+            content=memory.content,
+            tags=memory.tags,
+            source=memory.source,
+            confidence=memory.confidence,
+            context_ref=memory.context_ref,
+            created_at=memory.created_at,
+            updated_at=memory.updated_at,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving memory {memory_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve memory")
+
+
+@app.put("/v1/memory/declarative/{memory_id}")
+async def update_declarative_memory(
+    memory_id: str, request: UpdateMemoryRequest
+) -> MemoryOperationResponse:
+    """
+    Update an existing declarative memory.
+    
+    Args:
+        memory_id: The memory ID to update
+        request: Memory update request
+        
+    Returns:
+        Operation response
+    """
+    try:
+        store = get_declarative_memory_store()
+        success = store.update_memory(
+            memory_id=memory_id,
+            content=request.content,
+            tags=request.tags,
+            confidence=request.confidence,
+            context_ref=request.context_ref,
+        )
+        if not success:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        logger.info(f"Updated declarative memory {memory_id}")
+        return MemoryOperationResponse(
+            success=True,
+            message="Memory updated successfully",
+            memory_id=memory_id,
+        )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.warning(f"Validation error updating memory: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating memory {memory_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update memory")
+
+
+@app.delete("/v1/memory/declarative/{memory_id}")
+async def delete_declarative_memory(memory_id: str) -> MemoryOperationResponse:
+    """
+    Delete a declarative memory by ID.
+    
+    Args:
+        memory_id: The memory ID to delete
+        
+    Returns:
+        Operation response
+    """
+    try:
+        store = get_declarative_memory_store()
+        success = store.delete_memory(memory_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        logger.info(f"Deleted declarative memory {memory_id}")
+        return MemoryOperationResponse(
+            success=True,
+            message="Memory deleted successfully",
+            memory_id=memory_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting memory {memory_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete memory")
+
+
+# Activity Snapshot API Endpoints
+
+def check_activity_token(token: Optional[str] = None) -> None:
+    """
+    Check activity snapshot API token.
+    
+    Args:
+        token: Token from X-MILTON-TOKEN header
+        
+    Raises:
+        HTTPException: If auth is required and token is invalid
+    """
+    required_token = os.getenv("MILTON_ACTIVITY_TOKEN")
+    
+    # If no token is configured, auth is disabled (development mode)
+    if not required_token:
+        return
+    
+    # Token is required
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing X-MILTON-TOKEN header. Activity snapshot ingestion requires authentication.",
+        )
+    
+    if token != required_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid X-MILTON-TOKEN. Access denied.",
+        )
+
+
+@app.post("/v1/activity/snapshot")
+async def add_activity_snapshot(
+    request: AddSnapshotRequest,
+    raw_request: Request,
+) -> SnapshotOperationResponse:
+    """
+    Add a new activity snapshot from a device.
+    
+    Requires X-MILTON-TOKEN header if MILTON_ACTIVITY_TOKEN is set.
+    
+    Args:
+        request: Snapshot data
+        raw_request: FastAPI Request for header access
+        
+    Returns:
+        Operation response with snapshot ID
+    """
+    # Check auth token
+    token = raw_request.headers.get("x-milton-token")
+    check_activity_token(token)
+    
+    try:
+        store = get_activity_snapshot_store()
+        snapshot_id = store.add_snapshot(
+            device_id=request.device_id,
+            device_type=request.device_type,
+            captured_at=request.captured_at,
+            active_app=request.active_app,
+            window_title=request.window_title,
+            project_path=request.project_path,
+            git_branch=request.git_branch,
+            recent_files=request.recent_files,
+            notes=request.notes,
+        )
+        
+        # Trigger cleanup if configured
+        store.cleanup_old()
+        
+        logger.info(f"Added activity snapshot {snapshot_id} from device {request.device_id}")
+        return SnapshotOperationResponse(
+            success=True,
+            message="Snapshot added successfully",
+            snapshot_id=snapshot_id,
+        )
+    except ValueError as e:
+        logger.warning(f"Validation error adding snapshot: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error adding activity snapshot: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add snapshot")
+
+
+@app.get("/v1/activity/recent")
+async def get_recent_snapshots(
+    device_id: Optional[str] = None,
+    minutes: Optional[int] = None,
+    limit: int = 100,
+) -> SnapshotListResponse:
+    """
+    Get recent activity snapshots.
+    
+    Args:
+        device_id: Optional device ID filter
+        minutes: Optional time range in minutes (from now)
+        limit: Maximum number of results (default 100)
+        
+    Returns:
+        List of recent snapshots
+    """
+    try:
+        store = get_activity_snapshot_store()
+        snapshots = store.get_recent(
+            device_id=device_id,
+            minutes=minutes,
+            limit=limit,
+        )
+        return SnapshotListResponse(
+            snapshots=[
+                SnapshotResponse(
+                    id=s.id,
+                    device_id=s.device_id,
+                    device_type=s.device_type,
+                    captured_at=s.captured_at,
+                    active_app=s.active_app,
+                    window_title=s.window_title,
+                    project_path=s.project_path,
+                    git_branch=s.git_branch,
+                    recent_files=s.recent_files,
+                    notes=s.notes,
+                    created_at=s.created_at,
+                )
+                for s in snapshots
+            ],
+            count=len(snapshots),
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving snapshots: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve snapshots")
+
+
+@app.get("/v1/activity/search")
+async def search_snapshots(
+    q: Optional[str] = None,
+    device_id: Optional[str] = None,
+    limit: int = 100,
+) -> SnapshotListResponse:
+    """
+    Search activity snapshots by content.
+    
+    Args:
+        q: Optional search query (searches all text fields)
+        device_id: Optional device ID filter
+        limit: Maximum number of results (default 100)
+        
+    Returns:
+        List of matching snapshots
+    """
+    try:
+        store = get_activity_snapshot_store()
+        snapshots = store.search(
+            query=q,
+            device_id=device_id,
+            limit=limit,
+        )
+        return SnapshotListResponse(
+            snapshots=[
+                SnapshotResponse(
+                    id=s.id,
+                    device_id=s.device_id,
+                    device_type=s.device_type,
+                    captured_at=s.captured_at,
+                    active_app=s.active_app,
+                    window_title=s.window_title,
+                    project_path=s.project_path,
+                    git_branch=s.git_branch,
+                    recent_files=s.recent_files,
+                    notes=s.notes,
+                    created_at=s.created_at,
+                )
+                for s in snapshots
+            ],
+            count=len(snapshots),
+        )
+    except Exception as e:
+        logger.error(f"Error searching snapshots: {e}")
+        raise HTTPException(status_code=500, detail="Failed to search snapshots")
 
 
 if __name__ == "__main__":

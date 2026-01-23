@@ -26,6 +26,7 @@ from milton_orchestrator.reminders import (
     REMINDER_ACTIONS,
     REMINDER_SOURCES,
     DEFAULT_ACTIONS,
+    _LEGACY_SOURCE_MAP,
 )
 
 
@@ -554,7 +555,7 @@ def test_snooze_delays_due_at_and_records_audit(tmp_path):
     assert result is True
 
     reminder = store.get_reminder(reminder_id)
-    assert reminder.status == "snoozed"
+    assert reminder.status == "scheduled"  # Snoozed reminders return to scheduled status
     assert reminder.sent_at is None  # Reset
     # Snooze sets due_at to current time + minutes, so it should be in the future
     assert reminder.due_at >= now_ts + (30 * 60) - 5  # Allow small time drift
@@ -637,7 +638,7 @@ def test_roundtrip_create_update_snooze_acknowledge(tmp_path):
     # Snooze
     store.snooze(rid, 15, actor="user")
     r = store.get_reminder(rid)
-    assert r.status == "snoozed"
+    assert r.status == "scheduled"  # Snoozed reminders return to scheduled status
     assert len(r.audit_log) == 3
 
     # Fire again (after snooze period)
@@ -657,7 +658,7 @@ def test_roundtrip_create_update_snooze_acknowledge(tmp_path):
     assert actions[0] == "created"
     assert "scheduled->fired" in actions[1]
     assert "snoozed:15min" in actions[2]
-    assert "snoozed->fired" in actions[3]
+    assert "scheduled->fired" in actions[3]  # After snooze, status is 'scheduled' again
     assert "fired->acknowledged" in actions[4]
 
     store.close()
@@ -688,6 +689,47 @@ def test_constants_exported():
     assert "phone" in REMINDER_SOURCES
     assert "voice" in REMINDER_SOURCES
     assert "other" in REMINDER_SOURCES
+
+
+def test_legacy_source_mapping():
+    """Test that legacy sources like 'manual_cli' are mapped to valid sources.
+
+    Regression test for: ValueError: Invalid source 'manual_cli', must be one of ['other','phone','voice','webui']
+    """
+    # Verify legacy sources are mapped correctly
+    assert _LEGACY_SOURCE_MAP.get("manual_cli") == "other"
+    assert _LEGACY_SOURCE_MAP.get("cli") == "other"
+    assert _LEGACY_SOURCE_MAP.get("api") == "other"
+
+    # Valid sources should pass through unchanged
+    assert _LEGACY_SOURCE_MAP.get("webui", "webui") == "webui"
+    assert _LEGACY_SOURCE_MAP.get("phone", "phone") == "phone"
+
+
+def test_row_to_reminder_legacy_source(tmp_path):
+    """Test that _row_to_reminder normalizes legacy source values.
+
+    Regression test: reminders with legacy 'manual_cli' source in DB should
+    not crash when loaded.
+    """
+    db_path = tmp_path / "test_reminders.db"
+    store = ReminderStore(db_path)
+
+    # Insert a reminder with legacy source directly via SQL
+    with store._conn:
+        store._conn.execute(
+            """
+            INSERT INTO reminders
+            (kind, message, due_at, created_at, source)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("REMIND", "Test legacy source", 9999999999, 1737312600, "manual_cli"),
+        )
+
+    # list_reminders should not crash - it should normalize the legacy source
+    reminders = store.list_reminders()
+    assert len(reminders) == 1
+    assert reminders[0].source == "other"  # manual_cli -> other
 
 
 # =============================================================================

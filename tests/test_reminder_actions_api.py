@@ -25,16 +25,23 @@ def app_client(reminder_store, tmp_path, monkeypatch):
     scripts_dir = root_dir / "scripts"
     sys.path.insert(0, str(scripts_dir))
     
+    # Clear any action token from environment (make tests hermetic)
+    monkeypatch.delenv("MILTON_ACTION_TOKEN", raising=False)
+    monkeypatch.delenv("MILTON_REQUIRE_ACTION_TOKEN", raising=False)
+    
     # Mock the reminder store before import
     monkeypatch.setenv("MILTON_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("NTFY_BASE_URL", "https://ntfy.sh")
     monkeypatch.setenv("ANSWER_TOPIC", "test-topic")
     
     # Import after env setup
-    from start_api_server import app as flask_app, reminder_store as api_store
-    
-    # Replace the store in the module
+    from start_api_server import app as flask_app, create_app
     import start_api_server
+    
+    # Initialize app without loading .env (use monkeypatched env only)
+    create_app(load_env=False)
+    
+    # Replace the store in the module with test store
     start_api_server.reminder_store = reminder_store
     
     flask_app.config["TESTING"] = True
@@ -101,12 +108,12 @@ def test_reminder_action_snooze_30(app_client, reminder_store):
     data = response.get_json()
     
     assert data["action"] == "SNOOZE_30"
-    assert data["status"] == "snoozed"
+    assert data["status"] == "scheduled"  # Snoozed reminders return to scheduled status
     assert data["due_at"] is not None
     
     # Verify reminder was snoozed
     reminder = reminder_store.get_reminder(reminder_id)
-    assert reminder.status == "snoozed"
+    assert reminder.status == "scheduled"  # Snoozed reminders return to scheduled status
     assert reminder.sent_at is None  # Reset for re-firing
     # Due time should be approximately 30 minutes from now
     assert abs(reminder.due_at - (now_ts + 30 * 60)) < 60  # Within 1 minute tolerance
@@ -135,7 +142,7 @@ def test_reminder_action_delay_2h(app_client, reminder_store):
     data = response.get_json()
     
     assert data["action"] == "DELAY_2H"
-    assert data["status"] == "snoozed"
+    assert data["status"] == "scheduled"  # Snoozed/delayed reminders return to scheduled status
     
     # Verify delay
     reminder = reminder_store.get_reminder(reminder_id)
@@ -190,17 +197,29 @@ def test_reminder_action_missing_action(app_client, reminder_store):
     assert response.status_code == 400
 
 
-def test_reminder_action_with_token_auth(app_client, reminder_store, monkeypatch):
+def test_reminder_action_with_token_auth(reminder_store, tmp_path, monkeypatch):
     """Test action endpoint with token authentication."""
-    monkeypatch.setenv("MILTON_ACTION_TOKEN", "secret123")
-    
-    # Need to reload module to pick up env var
     import sys
-    import importlib
+    from pathlib import Path
+    
+    # Add scripts dir to path
+    root_dir = Path(__file__).parent.parent
+    scripts_dir = root_dir / "scripts"
+    sys.path.insert(0, str(scripts_dir))
+    
+    # Set token in environment
+    monkeypatch.setenv("MILTON_ACTION_TOKEN", "secret123")
+    monkeypatch.setenv("MILTON_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("NTFY_BASE_URL", "https://ntfy.sh")
+    monkeypatch.setenv("ANSWER_TOPIC", "test-topic")
+    
+    # Import and initialize
+    from start_api_server import app as flask_app, create_app
     import start_api_server
-    importlib.reload(start_api_server)
+    create_app(load_env=False)
     start_api_server.reminder_store = reminder_store
-    start_api_server.MILTON_ACTION_TOKEN = "secret123"
+    flask_app.config["TESTING"] = True
+    client = flask_app.test_client()
     
     reminder_id = reminder_store.add_reminder(
         kind="REMIND",
@@ -212,7 +231,7 @@ def test_reminder_action_with_token_auth(app_client, reminder_store, monkeypatch
     with patch("start_api_server.requests.post") as mock_post:
         mock_post.return_value = Mock(status_code=200)
         
-        response = app_client.post(
+        response = client.post(
             f"/api/reminders/{reminder_id}/action",
             json={"action": "DONE", "token": "secret123"},
         )
@@ -220,7 +239,7 @@ def test_reminder_action_with_token_auth(app_client, reminder_store, monkeypatch
     assert response.status_code == 200
     
     # Invalid token should fail
-    response = app_client.post(
+    response = client.post(
         f"/api/reminders/{reminder_id}/action",
         json={"action": "DONE", "token": "wrong_token"},
     )
@@ -228,9 +247,81 @@ def test_reminder_action_with_token_auth(app_client, reminder_store, monkeypatch
     assert response.status_code == 401
     
     # Missing token should fail
-    response = app_client.post(
+    response = client.post(
         f"/api/reminders/{reminder_id}/action",
         json={"action": "DONE"},
+    )
+    
+    assert response.status_code == 401
+
+
+def test_reminder_action_strict_mode_startup_fails(tmp_path, monkeypatch):
+    """Test that strict mode without token raises ValueError."""
+    import sys
+    from pathlib import Path
+    
+    # Add scripts dir to path
+    root_dir = Path(__file__).parent.parent
+    scripts_dir = root_dir / "scripts"
+    sys.path.insert(0, str(scripts_dir))
+    
+    # Enable strict mode but no token
+    monkeypatch.setenv("MILTON_REQUIRE_ACTION_TOKEN", "true")
+    monkeypatch.delenv("MILTON_ACTION_TOKEN", raising=False)
+    monkeypatch.setenv("MILTON_STATE_DIR", str(tmp_path))
+    
+    from start_api_server import create_app
+    
+    # Should raise ValueError
+    with pytest.raises(ValueError, match="MILTON_REQUIRE_ACTION_TOKEN is enabled but MILTON_ACTION_TOKEN is not set"):
+        create_app(load_env=False)
+
+
+def test_reminder_action_strict_mode_with_token(reminder_store, tmp_path, monkeypatch):
+    """Test that strict mode with correct token works."""
+    import sys
+    from pathlib import Path
+    
+    # Add scripts dir to path
+    root_dir = Path(__file__).parent.parent
+    scripts_dir = root_dir / "scripts"
+    sys.path.insert(0, str(scripts_dir))
+    
+    # Enable strict mode with token
+    monkeypatch.setenv("MILTON_REQUIRE_ACTION_TOKEN", "true")
+    monkeypatch.setenv("MILTON_ACTION_TOKEN", "test_token_123")
+    monkeypatch.setenv("MILTON_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("NTFY_BASE_URL", "https://ntfy.sh")
+    monkeypatch.setenv("ANSWER_TOPIC", "test-topic")
+    
+    from start_api_server import app as flask_app, create_app
+    import start_api_server
+    create_app(load_env=False)
+    start_api_server.reminder_store = reminder_store
+    flask_app.config["TESTING"] = True
+    client = flask_app.test_client()
+    
+    reminder_id = reminder_store.add_reminder(
+        kind="REMIND",
+        due_at=int(datetime.now().timestamp()) + 3600,
+        message="Test strict mode",
+    )
+    
+    # Correct token should work
+    with patch("start_api_server.requests.post") as mock_post:
+        mock_post.return_value = Mock(status_code=200)
+        
+        response = client.post(
+            f"/api/reminders/{reminder_id}/action",
+            json={"action": "DONE", "token": "test_token_123"},
+        )
+    
+    assert response.status_code == 200
+    
+    # Wrong token should fail with 401
+    response = client.post(
+        f"/api/reminders/{reminder_id}/action",
+        json={"action": "DONE", "token": "wrong_token"},
     )
     
     assert response.status_code == 401

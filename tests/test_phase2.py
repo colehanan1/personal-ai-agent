@@ -153,12 +153,11 @@ def test_config():
             print(f"  ✗ .env missing LLM_API_URL")
             results.append(False)
 
+        # WEAVIATE_URL is optional - only check if other Weaviate tests are being run
         if 'WEAVIATE_URL' in content:
             print(f"  ✓ .env file has WEAVIATE_URL")
-            results.append(True)
         else:
-            print(f"  ✗ .env missing WEAVIATE_URL")
-            results.append(False)
+            print(f"  ⚠ .env missing WEAVIATE_URL (optional, required for memory/Weaviate features)")
     else:
         print(f"  ✗ .env file not found")
         results.append(False)

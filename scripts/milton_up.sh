@@ -96,6 +96,13 @@ echo ""
 info "Installing systemd service units..."
 install_service "$SCRIPT_DIR/systemd/milton-api.service.template" "milton-api" "$PYTHON_EXE"
 install_service "$SCRIPT_DIR/systemd/milton-gateway.service.template" "milton-gateway" "$PYTHON_EXE"
+
+# Install reminders service (no templating needed, uses %h)
+info "Installing milton-reminders.service..."
+user_systemd_dir="$HOME/.config/systemd/user"
+mkdir -p "$user_systemd_dir"
+cp "$MILTON_REPO_DIR/systemd/milton-reminders.service" "$user_systemd_dir/milton-reminders.service"
+success "Installed $user_systemd_dir/milton-reminders.service"
 echo ""
 
 # Reload systemd user daemon
@@ -108,6 +115,7 @@ echo ""
 info "Stopping any existing Milton services..."
 systemctl --user stop milton-gateway.service 2>/dev/null || true
 systemctl --user stop milton-api.service 2>/dev/null || true
+systemctl --user stop milton-reminders.service 2>/dev/null || true
 sleep 1
 echo ""
 
@@ -115,6 +123,7 @@ echo ""
 info "Enabling and starting Milton services..."
 systemctl --user enable milton-api.service
 systemctl --user enable milton-gateway.service
+systemctl --user enable milton-reminders.service
 systemctl --user start milton-api.service
 echo ""
 
@@ -136,6 +145,11 @@ echo ""
 
 # Start gateway
 systemctl --user start milton-gateway.service
+
+# Start reminders scheduler
+info "Starting Milton Reminders scheduler..."
+systemctl --user start milton-reminders.service
+success "Reminders scheduler started"
 echo ""
 
 # Wait for Gateway to be healthy
@@ -156,8 +170,18 @@ echo ""
 
 success "All Milton services started successfully!"
 echo ""
+
+# Start Open WebUI (optional but recommended)
+info "Starting Open WebUI container..."
+if "$SCRIPT_DIR/open_webui_up.sh"; then
+    success "Open WebUI started"
+else
+    warn "Open WebUI failed to start (optional component)"
+fi
+echo ""
+
 echo "Service Status:"
-systemctl --user status milton-api.service milton-gateway.service --no-pager || true
+systemctl --user status milton-api.service milton-gateway.service milton-reminders.service --no-pager || true
 echo ""
 echo "Effective Configuration:"
 echo "  State Directory:  $MILTON_STATE_DIR"
@@ -165,14 +189,18 @@ echo "  API Server:       $MILTON_API_URL"
 echo "  Gateway:          $GATEWAY_URL"
 echo "  LLM Backend:      $LLM_API_URL"
 echo "  Weaviate:         $WEAVIATE_URL"
+echo "  Open WebUI:       http://localhost:3000"
 echo ""
 echo "Logs:"
-echo "  API:     journalctl --user -u milton-api -f"
-echo "  Gateway: journalctl --user -u milton-gateway -f"
-echo "  Or file: $MILTON_STATE_DIR/logs/milton-{api,gateway}.log"
+echo "  API:       journalctl --user -u milton-api -f"
+echo "  Gateway:   journalctl --user -u milton-gateway -f"
+echo "  Reminders: journalctl --user -u milton-reminders -f"
+echo "  Open WebUI: docker logs open-webui -f"
+echo "  Or file:   $MILTON_STATE_DIR/logs/milton-{api,gateway}.log"
 echo ""
 echo "Next Steps:"
 echo "  1. Run smoke tests:    ./scripts/milton_smoke.sh"
-echo "  2. Check status:       ./scripts/milton_status.sh"
-echo "  3. Stop services:      ./scripts/milton_down.sh"
+echo "  2. Web UI test:        ./scripts/web_ui_smoke_test.sh"
+echo "  3. Check status:       ./scripts/milton_status.sh"
+echo "  4. Stop services:      ./scripts/milton_down.sh"
 echo ""

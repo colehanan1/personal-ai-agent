@@ -5,32 +5,21 @@ After=network.target
 
 [Service]
 Type=simple
-
-# Environment configuration
-# IMPORTANT: Update these values for your setup
-Environment="NTFY_TOPIC=milton-reminders-cole"
-Environment="NTFY_BASE_URL=https://ntfy.sh"
-Environment="TZ=America/New_York"
+WorkingDirectory=%h/milton
+Environment="PATH=%h/miniconda3/envs/milton/bin:/usr/local/bin:/usr/bin"
 Environment="STATE_DIR=%h/.local/state/milton"
-
-# Optional: ntfy authentication token
-# Environment="NTFY_TOKEN=tk_yourtoken"
-
-# Path to milton-reminders executable
-# Update this path to match your conda environment
-ExecStart=/home/cole-hanan/miniconda3/envs/milton/bin/milton-reminders run
-
-# Restart policy
+Environment="NTFY_BASE_URL=https://ntfy.sh"
+Environment="NTFY_TOPIC=milton-reminders-cole"
+Environment="TZ=America/New_York"
+ExecStart=%h/miniconda3/envs/milton/bin/milton-reminders run
 Restart=always
 RestartSec=10
-
-# Logging
 StandardOutput=journal
 StandardError=journal
 
-# Security hardening (optional)
-# NoNewPrivileges=true
-# PrivateTmp=true
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=default.target

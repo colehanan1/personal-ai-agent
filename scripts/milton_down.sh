@@ -31,10 +31,16 @@ echo "║                    MILTON SERVICE SHUTDOWN                            
 echo "╚═══════════════════════════════════════════════════════════════════════╝"
 echo ""
 
-# Stop services in reverse order (gateway first, then API)
+# Stop services in reverse order (gateway first, then API, then reminders)
 info "Stopping Milton services via systemd..."
 systemctl --user stop milton-gateway.service 2>/dev/null || true
 systemctl --user stop milton-api.service 2>/dev/null || true
+systemctl --user stop milton-reminders.service 2>/dev/null || true
+echo ""
+
+# Stop Open WebUI
+info "Stopping Open WebUI..."
+"$SCRIPT_DIR/open_webui_down.sh" 2>/dev/null || true
 echo ""
 
 # Wait a moment for processes to terminate
@@ -43,6 +49,7 @@ sleep 1
 # Check if services actually stopped
 API_RUNNING=$(systemctl --user is-active milton-api.service 2>/dev/null || echo "inactive")
 GATEWAY_RUNNING=$(systemctl --user is-active milton-gateway.service 2>/dev/null || echo "inactive")
+REMINDERS_RUNNING=$(systemctl --user is-active milton-reminders.service 2>/dev/null || echo "inactive")
 
 if [ "$API_RUNNING" = "inactive" ]; then
     success "API service stopped"
@@ -54,6 +61,12 @@ if [ "$GATEWAY_RUNNING" = "inactive" ]; then
     success "Gateway service stopped"
 else
     warn "Gateway service still running (state: $GATEWAY_RUNNING)"
+fi
+
+if [ "$REMINDERS_RUNNING" = "inactive" ]; then
+    success "Reminders service stopped"
+else
+    warn "Reminders service still running (state: $REMINDERS_RUNNING)"
 fi
 echo ""
 
@@ -108,7 +121,7 @@ check_port_listeners "$GATEWAY_PORT" "Gateway" || PORT_CLEAN=false
 echo ""
 
 # Show final status
-if [ "$API_RUNNING" = "inactive" ] && [ "$GATEWAY_RUNNING" = "inactive" ] && [ "$PORT_CLEAN" = true ]; then
+if [ "$API_RUNNING" = "inactive" ] && [ "$GATEWAY_RUNNING" = "inactive" ] && [ "$REMINDERS_RUNNING" = "inactive" ] && [ "$PORT_CLEAN" = true ]; then
     success "All Milton services stopped cleanly"
 else
     warn "Some services or ports may still be active"

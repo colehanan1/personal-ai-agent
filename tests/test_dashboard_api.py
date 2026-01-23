@@ -133,20 +133,17 @@ def test_queue_endpoint_with_jobs(client, temp_state_dir):
 
 def test_reminders_endpoint_not_available(client):
     """Test /api/reminders endpoint when reminders module not available."""
-    # Create a fake milton_reminders module that raises ImportError on access
-    fake_module = MagicMock()
-    fake_module.cli.list_reminders = MagicMock(side_effect=ImportError("Module not installed"))
-
-    # Ensure milton_reminders is not in sys.modules (will trigger ImportError)
-    with patch.dict('sys.modules', {'milton_reminders': None, 'milton_reminders.cli': None}):
+    # The endpoint uses milton_orchestrator.reminders.ReminderStore
+    # We need to patch it to simulate unavailability
+    with patch('scripts.start_api_server.reminder_store') as mock_store:
+        mock_store.list_reminders.side_effect = Exception("Reminders not available")
+        
         response = client.get("/api/reminders")
 
-        # Should still return 200 with empty list
-        assert response.status_code == 200
+        # Should return 500 error when backend fails
+        assert response.status_code == 500
         data = response.get_json()
-
-        assert data["reminders"] == []
-        assert data["count"] == 0
+        assert "error" in data
 
 
 def test_reminders_endpoint_with_limit(client, temp_state_dir):

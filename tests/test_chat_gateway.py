@@ -368,3 +368,277 @@ class TestHealthEndpoint:
             data = response.json()
             assert "status" in data
             assert "gateway" in data
+
+
+class TestNaturalLanguageActions:
+    """Tests for natural language action execution via /v1/chat/completions."""
+
+    @pytest.fixture
+    def mock_llm_response_simple(self):
+        """Mock LLM response that just echoes."""
+        return {
+            "id": "chatcmpl-nl-test",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "llama31-8b-instruct",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": "I acknowledge your request.",
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 10, "total_tokens": 20},
+        }
+
+    def test_nl_reminder_creates_with_action_summary(self, mock_llm_response_simple, tmp_path):
+        """Test that NL reminder creates action and includes summary."""
+        from fastapi.testclient import TestClient
+        from milton_gateway.server import app
+        from milton_orchestrator.reminders import ReminderStore
+        from milton_orchestrator.state_paths import resolve_reminders_db_path
+
+        with (
+            patch("milton_gateway.server.get_llm_client") as mock_get_client,
+            patch("milton_gateway.server.resolve_state_dir") as mock_state_dir,
+        ):
+            mock_client = AsyncMock()
+            mock_client.chat_completion = AsyncMock(return_value=mock_llm_response_simple)
+            mock_get_client.return_value = mock_client
+            mock_state_dir.return_value = tmp_path
+
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "milton-local",
+                    "messages": [
+                        {"role": "user", "content": "remind me tomorrow at 9am to submit report"}
+                    ],
+                    "stream": False,
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+
+            # Check response includes action summary
+            content = data["choices"][0]["message"]["content"]
+            assert "Action summary" in content
+            assert "reminder" in content.lower()
+
+            # Verify reminder was actually created
+            store = ReminderStore(resolve_reminders_db_path(base_dir=tmp_path))
+            try:
+                reminders = store.list_reminders(include_sent=False, include_canceled=False)
+                assert any("submit report" in r.message for r in reminders)
+            finally:
+                store._conn.close()
+
+    def test_nl_memory_creates_with_action_summary(self, mock_llm_response_simple, tmp_path):
+        """Test that NL memory storage creates fact and includes summary."""
+        from fastapi.testclient import TestClient
+        from milton_gateway.server import app
+        from storage.chat_memory import ChatMemoryStore
+
+        with (
+            patch("milton_gateway.server.get_llm_client") as mock_get_client,
+            patch("milton_gateway.server.resolve_state_dir") as mock_state_dir,
+        ):
+            mock_client = AsyncMock()
+            mock_client.chat_completion = AsyncMock(return_value=mock_llm_response_simple)
+            mock_get_client.return_value = mock_client
+            mock_state_dir.return_value = tmp_path
+
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "milton-local",
+                    "messages": [
+                        {"role": "user", "content": "remember that my email is test@example.com"}
+                    ],
+                    "stream": False,
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+
+            # Check response includes action summary
+            content = data["choices"][0]["message"]["content"]
+            assert "Action summary" in content
+            assert "memory" in content.lower()
+
+            # Verify memory was actually created
+            store = ChatMemoryStore(tmp_path / "chat_memory.sqlite3")
+            try:
+                fact = store.get_fact("email")
+                assert fact is not None
+                assert "test@example.com" in fact.value
+            finally:
+                store.close()
+
+    def test_nl_goal_creates_with_action_summary(self, mock_llm_response_simple, tmp_path):
+        """Test that NL goal creation works via endpoint."""
+        from fastapi.testclient import TestClient
+        from milton_gateway.server import app
+        from goals.api import list_goals
+
+        with (
+            patch("milton_gateway.server.get_llm_client") as mock_get_client,
+            patch("milton_gateway.server.resolve_state_dir") as mock_state_dir,
+        ):
+            mock_client = AsyncMock()
+            mock_client.chat_completion = AsyncMock(return_value=mock_llm_response_simple)
+            mock_get_client.return_value = mock_client
+            mock_state_dir.return_value = tmp_path
+
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "milton-local",
+                    "messages": [
+                        {"role": "user", "content": "my goal this week is to finish the project"}
+                    ],
+                    "stream": False,
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+
+            # Check response includes action summary
+            content = data["choices"][0]["message"]["content"]
+            assert "Action summary" in content
+            assert "goal" in content.lower()
+
+            # Verify goal was actually created
+            goals = list_goals("daily", base_dir=tmp_path)
+            assert any("project" in g.get("text", "").lower() for g in goals)
+
+    def test_nl_ambiguous_reminder_returns_clarify(self, mock_llm_response_simple, tmp_path):
+        """Test that ambiguous reminders request clarification."""
+        from fastapi.testclient import TestClient
+        from milton_gateway.server import app
+
+        with (
+            patch("milton_gateway.server.get_llm_client") as mock_get_client,
+            patch("milton_gateway.server.resolve_state_dir") as mock_state_dir,
+        ):
+            mock_client = AsyncMock()
+            mock_client.chat_completion = AsyncMock(return_value=mock_llm_response_simple)
+            mock_get_client.return_value = mock_client
+            mock_state_dir.return_value = tmp_path
+
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "milton-local",
+                    "messages": [
+                        {"role": "user", "content": "remind me to call mom"}
+                    ],
+                    "stream": False,
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+
+            # Should return clarification question (not action summary)
+            content = data["choices"][0]["message"]["content"]
+            assert "when" in content.lower() or "?" in content
+
+    def test_nl_noop_proceeds_to_llm(self, mock_llm_response_simple, tmp_path):
+        """Test that NOOP messages proceed to LLM as normal."""
+        from fastapi.testclient import TestClient
+        from milton_gateway.server import app
+
+        with (
+            patch("milton_gateway.server.get_llm_client") as mock_get_client,
+            patch("milton_gateway.server.resolve_state_dir") as mock_state_dir,
+        ):
+            mock_client = AsyncMock()
+            mock_client.chat_completion = AsyncMock(return_value=mock_llm_response_simple)
+            mock_get_client.return_value = mock_client
+            mock_state_dir.return_value = tmp_path
+
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "milton-local",
+                    "messages": [
+                        {"role": "user", "content": "Hello, how are you?"}
+                    ],
+                    "stream": False,
+                },
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+
+            # Should NOT contain action summary (it's a normal conversation)
+            content = data["choices"][0]["message"]["content"]
+            assert "Action summary" not in content
+
+            # LLM should have been called
+            assert mock_client.chat_completion.called
+
+    def test_no_duplicate_reminders_on_retry_with_exact_time(self, mock_llm_response_simple, tmp_path):
+        """Test that duplicate reminders with exact same time are not created on retry."""
+        from fastapi.testclient import TestClient
+        from milton_gateway.server import app
+        from milton_orchestrator.reminders import ReminderStore
+        from milton_orchestrator.state_paths import resolve_reminders_db_path
+
+        with (
+            patch("milton_gateway.server.get_llm_client") as mock_get_client,
+            patch("milton_gateway.server.resolve_state_dir") as mock_state_dir,
+        ):
+            mock_client = AsyncMock()
+            mock_client.chat_completion = AsyncMock(return_value=mock_llm_response_simple)
+            mock_get_client.return_value = mock_client
+            mock_state_dir.return_value = tmp_path
+
+            client = TestClient(app)
+
+            # First request with explicit time (same time produces same timestamp)
+            response1 = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "milton-local",
+                    "messages": [
+                        {"role": "user", "content": "remind me tomorrow at 9am to stretch"}
+                    ],
+                    "stream": False,
+                },
+            )
+            assert response1.status_code == 200
+
+            # Second identical request (retry) with same explicit time
+            response2 = client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "milton-local",
+                    "messages": [
+                        {"role": "user", "content": "remind me tomorrow at 9am to stretch"}
+                    ],
+                    "stream": False,
+                },
+            )
+            assert response2.status_code == 200
+
+            # Should only have ONE reminder (deduped by exact message + timestamp)
+            store = ReminderStore(resolve_reminders_db_path(base_dir=tmp_path))
+            try:
+                reminders = store.list_reminders(include_sent=False, include_canceled=False)
+                stretch_reminders = [r for r in reminders if "stretch" in r.message]
+                assert len(stretch_reminders) == 1
+            finally:
+                store._conn.close()

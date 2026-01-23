@@ -38,6 +38,7 @@ from agents.contracts import (
     generate_iso_timestamp,
 )
 from memory.retrieve import query_relevant, query_relevant_hybrid
+from memory.status import record_retrieval
 from memory.schema import MemoryItem
 from milton_orchestrator.state_paths import resolve_state_dir
 from phd_context import (
@@ -217,7 +218,8 @@ class ContextPacket:
         return ordered
 
     def to_prompt(self) -> str:
-        lines = ["CONTEXT PACKET (evidence-backed memory only)"]
+        lines = ["===MEMORY INJECTED==="]
+        lines.append("CONTEXT PACKET (evidence-backed memory only)")
         if self.bullets:
             lines.append("Relevant memory bullets:")
             for bullet in self.bullets:
@@ -516,8 +518,9 @@ class NEXUS:
                     citations=[],
                 )
 
-            # Get database path
-            db_path = resolve_state_dir() / "reminders.sqlite3"
+            # Get canonical database path
+            from milton_orchestrator.state_paths import resolve_reminders_db_path
+            db_path = resolve_reminders_db_path()
 
             # Check for list command
             if re.search(r'\b(list|show|view)\b.*\breminder', user_text, re.IGNORECASE):
@@ -656,6 +659,9 @@ class NEXUS:
             semantic_weight=0.5,  # Balanced hybrid
             mode="hybrid",
         )
+
+        # Record retrieval stats
+        record_retrieval(query=user_text, count=len(memories), mode="hybrid")
 
         bullets: list[ContextBullet] = []
         current_chars = 0
