@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator, Mapping, Optional
+from typing import Any, AsyncIterator, Dict, Mapping, Optional
 
 from dotenv import load_dotenv
 
@@ -560,6 +560,8 @@ async def chat_completions(
                 )
             
             elif plan.get("action") == "NOOP":
+                fallback_used = False
+                
                 # Check if LLM fallback should be attempted
                 if should_use_llm_fallback(plan, user_message):
                     logger.info(f"🔄 Attempting LLM fallback for NOOP case")
@@ -599,26 +601,65 @@ async def chat_completions(
                             action_summary = _format_action_summary(fallback_plan, exec_result)
                             action_context = _build_action_context(fallback_plan, exec_result)
                             skip_auto_store = True
+                            fallback_used = True
                             
                             logger.info(f"✅ Fallback action executed: {fallback_plan.get('action')} -> {exec_result.get('status')}")
                         else:
-                            # Classification failed safety gates
+                            # Classification failed safety gates - check for deterministic response
                             logger.info(f"🚫 LLM fallback did not meet safety gates")
-                            action_context = _build_action_context(plan, exec_result=None)
-                            reason = plan.get("payload", {}).get("reason", "no_action_detected")
-                            logger.info(f"🚫 NOOP: {reason} - will inject truth gate into system prompt")
+                            intent_hint = _detect_action_intent(user_message)
+                            if intent_hint:
+                                # Return deterministic NOOP response without calling LLM
+                                logger.info(f"🛑 Deterministic NOOP: detected intent={intent_hint}, blocking LLM call")
+                                return _build_deterministic_noop_response(
+                                    user_message,
+                                    intent_hint,
+                                    plan,
+                                    thread_id,
+                                    chat_request,
+                                )
+                            else:
+                                # Not action-like, proceed with LLM for normal chat
+                                action_context = _build_action_context(plan, exec_result=None)
+                                reason = plan.get("payload", {}).get("reason", "no_action_detected")
+                                logger.info(f"🚫 NOOP: {reason} - will inject truth gate into system prompt")
                     
                     except Exception as e:
                         logger.error(f"LLM fallback error: {e}", exc_info=True)
-                        # Fall through to normal NOOP handling
+                        # Check if we should return deterministic response
+                        intent_hint = _detect_action_intent(user_message)
+                        if intent_hint:
+                            logger.info(f"🛑 Deterministic NOOP after fallback error: intent={intent_hint}")
+                            return _build_deterministic_noop_response(
+                                user_message,
+                                intent_hint,
+                                plan,
+                                thread_id,
+                                chat_request,
+                            )
+                        else:
+                            # Fall through to normal NOOP handling with truth gate
+                            action_context = _build_action_context(plan, exec_result=None)
+                            reason = plan.get("payload", {}).get("reason", "no_action_detected")
+                            logger.info(f"🚫 NOOP (fallback failed): {reason} - will inject truth gate")
+                else:
+                    # Fallback not triggered - check if action-like request
+                    intent_hint = _detect_action_intent(user_message)
+                    if intent_hint:
+                        # Return deterministic NOOP response without calling LLM
+                        logger.info(f"🛑 Deterministic NOOP: detected intent={intent_hint}, no fallback triggered, blocking LLM call")
+                        return _build_deterministic_noop_response(
+                            user_message,
+                            intent_hint,
+                            plan,
+                            thread_id,
+                            chat_request,
+                        )
+                    else:
+                        # Not action-like, proceed with LLM for normal chat
                         action_context = _build_action_context(plan, exec_result=None)
                         reason = plan.get("payload", {}).get("reason", "no_action_detected")
-                        logger.info(f"🚫 NOOP (fallback failed): {reason} - will inject truth gate")
-                else:
-                    # No fallback needed - normal NOOP handling
-                    action_context = _build_action_context(plan, exec_result=None)
-                    reason = plan.get("payload", {}).get("reason", "no_action_detected")
-                    logger.info(f"🚫 NOOP: {reason} - will inject truth gate into system prompt")
+                        logger.info(f"🚫 NOOP: {reason} - proceeding with LLM (not action-like)")
             
             elif plan.get("action") != "NOOP":
                 # Execute the action
@@ -1177,6 +1218,143 @@ def _summary_text(value: Any) -> str:
     text = str(value or "").replace("\n", " ").replace("\r", " ").strip()
     text = re.sub(r"\s+", " ", text)
     return text.encode("ascii", "ignore").decode("ascii")
+
+
+def _detect_action_intent(text: str) -> Optional[str]:
+    """Detect if text appears to request an action, return intent hint.
+    
+    This is a conservative heuristic used to decide if we should return
+    a deterministic NOOP response instead of calling the LLM.
+    
+    Args:
+        text: User's message text
+        
+    Returns:
+        Intent hint ("reminder", "goal", "memory") or None if not action-like
+    """
+    text_lower = text.lower()
+    
+    # Check for reminder-related keywords
+    reminder_keywords = [
+        "reminder", "remind", "ping me", "nudge me", 
+        "set a reminder", "create a reminder", "add a reminder",
+        "schedule a reminder", "schedule", "notify me", "alert me"
+    ]
+    for keyword in reminder_keywords:
+        if keyword in text_lower:
+            return "reminder"
+    
+    # Check for goal-related keywords
+    goal_keywords = [
+        "goal", "add a goal", "set a goal", "create a goal",
+        "track this", "tracking"
+    ]
+    for keyword in goal_keywords:
+        if keyword in text_lower:
+            return "goal"
+    
+    # Check for memory-related keywords
+    memory_keywords = [
+        "remember that", "save this", "store this", 
+        "add to memory", "keep track of", "record this"
+    ]
+    for keyword in memory_keywords:
+        if keyword in text_lower:
+            return "memory"
+    
+    return None
+
+
+def _build_deterministic_noop_response(
+    user_text: str,
+    intent_hint: Optional[str],
+    plan: Dict[str, Any],
+    thread_id: str,
+    chat_request: ChatCompletionRequest,
+) -> ChatCompletionResponse:
+    """Build a deterministic response for NOOP cases without calling LLM.
+    
+    This prevents LLM hallucinations when no action was executed.
+    
+    Args:
+        user_text: User's original message
+        intent_hint: Detected intent type ("reminder", "goal", "memory", or None)
+        plan: The NOOP plan from action planner
+        thread_id: Conversation thread ID
+        chat_request: Original chat request
+        
+    Returns:
+        ChatCompletionResponse with deterministic content
+    """
+    reason = plan.get("payload", {}).get("reason", "no_action_detected")
+    
+    # Build response based on detected intent
+    if intent_hint == "reminder":
+        response_text = (
+            "No reminder was created. I couldn't parse your request as a valid reminder command.\n\n"
+            "To create a reminder, try one of these formats:\n"
+            "• 'Remind me to <task> tomorrow at 4:30 PM'\n"
+            "• 'Set a reminder for me to <task> on Friday at 2pm'\n"
+            "• 'Create a reminder to <task> next week'\n\n"
+            "Make sure to include both what you want to be reminded about and when."
+        )
+    elif intent_hint == "goal":
+        response_text = (
+            "No goal was created. I couldn't parse your request as a valid goal command.\n\n"
+            "To create a goal, try:\n"
+            "• 'Add a goal: <goal description>'\n"
+            "• 'Create a goal to <accomplish something>'\n\n"
+            "What would you like to achieve?"
+        )
+    elif intent_hint == "memory":
+        response_text = (
+            "No information was saved. I couldn't parse your request as a memory storage command.\n\n"
+            "To save information, try:\n"
+            "• 'Remember that <fact>'\n"
+            "• 'Save this: <information>'\n"
+            "• 'Store the fact that <fact>'\n\n"
+            "What would you like me to remember?"
+        )
+    else:
+        # Action-like but unclear intent
+        response_text = (
+            "No action was executed. I detected what might be an action request, "
+            "but I couldn't determine what you wanted me to do.\n\n"
+            "I can help you:\n"
+            "• Create reminders (e.g., 'Remind me to X tomorrow at 4pm')\n"
+            "• Add goals (e.g., 'Add a goal: Complete project Y')\n"
+            "• Store information (e.g., 'Remember that I prefer Python')\n\n"
+            "What would you like to do?"
+        )
+    
+    # Add machine-readable action summary
+    action_summary_line = (
+        "\n\nACTION_SUMMARY: "
+        '{"action_detected": false, "action_executed": false, '
+        f'"reason": "{reason}", "intent_hint": "{intent_hint or "unknown"}"' + "}"
+    )
+    response_text += action_summary_line
+    
+    logger.info(f"🤖 Returning deterministic NOOP response (intent={intent_hint}, reason={reason})")
+    
+    # Build OpenAI-compatible response
+    return ChatCompletionResponse(
+        id=f"chatcmpl-{thread_id}-noop",
+        created=int(datetime.now(timezone.utc).timestamp()),
+        model=chat_request.model,
+        choices=[
+            ChatCompletionChoice(
+                index=0,
+                message=ChatMessage(role="assistant", content=response_text),
+                finish_reason="stop",
+            )
+        ],
+        usage=UsageInfo(
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+        ),
+    )
 
 
 async def blocking_chat_response(
