@@ -469,6 +469,7 @@ async def chat_completions(
 
     # Check if the last user message is a command
     action_summary = None
+    action_context = None  # Truth gate: track what was actually executed
     skip_auto_store = False
 
     if messages and messages[-1]["role"] == "user":
@@ -520,7 +521,7 @@ async def chat_completions(
                 )
 
         if not skip_planning:
-            from milton_gateway.action_planner import extract_action_plan
+            from milton_gateway.action_planner import extract_action_plan, should_use_llm_fallback
             from milton_gateway.action_executor import execute_action_plan
 
             plan = extract_action_plan(
@@ -528,7 +529,12 @@ async def chat_completions(
                 datetime.now(timezone.utc).isoformat(),
                 "America/Chicago",
             )
+            
+            # Build action context for all cases
+            action_context = None
+            
             if plan.get("action") == "CLARIFY":
+                # Short-circuit: return clarification question immediately
                 question = plan.get("payload", {}).get("question", "Could you clarify?")
                 response_text = question
                 try:
@@ -552,14 +558,79 @@ async def chat_completions(
                         total_tokens=0,
                     ),
                 )
-
-            if plan.get("action") != "NOOP":
+            
+            elif plan.get("action") == "NOOP":
+                # Check if LLM fallback should be attempted
+                if should_use_llm_fallback(plan, user_message):
+                    logger.info(f"🔄 Attempting LLM fallback for NOOP case")
+                    
+                    try:
+                        from milton_gateway.llm_intent_classifier import (
+                            classify_intent_with_llm,
+                            should_execute_classification,
+                            convert_classification_to_plan
+                        )
+                        
+                        # Call LLM classifier
+                        classification = await classify_intent_with_llm(
+                            user_message,
+                            llm_client,
+                            datetime.now(timezone.utc).isoformat(),
+                            "America/Chicago",
+                        )
+                        
+                        if classification and should_execute_classification(classification):
+                            # Convert to action plan format
+                            fallback_plan = convert_classification_to_plan(
+                                classification,
+                                "America/Chicago"
+                            )
+                            
+                            logger.info(f"✅ LLM fallback succeeded: {fallback_plan.get('action')}")
+                            logger.info(f"📋 Fallback plan: original_plan=NOOP, "
+                                      f"fallback_action={fallback_plan.get('action')}, "
+                                      f"confidence={fallback_plan.get('confidence')}")
+                            
+                            # Execute the fallback plan
+                            exec_result = execute_action_plan(
+                                fallback_plan,
+                                {"timezone": "America/Chicago", "state_dir": str(resolve_state_dir())},
+                            )
+                            action_summary = _format_action_summary(fallback_plan, exec_result)
+                            action_context = _build_action_context(fallback_plan, exec_result)
+                            skip_auto_store = True
+                            
+                            logger.info(f"✅ Fallback action executed: {fallback_plan.get('action')} -> {exec_result.get('status')}")
+                        else:
+                            # Classification failed safety gates
+                            logger.info(f"🚫 LLM fallback did not meet safety gates")
+                            action_context = _build_action_context(plan, exec_result=None)
+                            reason = plan.get("payload", {}).get("reason", "no_action_detected")
+                            logger.info(f"🚫 NOOP: {reason} - will inject truth gate into system prompt")
+                    
+                    except Exception as e:
+                        logger.error(f"LLM fallback error: {e}", exc_info=True)
+                        # Fall through to normal NOOP handling
+                        action_context = _build_action_context(plan, exec_result=None)
+                        reason = plan.get("payload", {}).get("reason", "no_action_detected")
+                        logger.info(f"🚫 NOOP (fallback failed): {reason} - will inject truth gate")
+                else:
+                    # No fallback needed - normal NOOP handling
+                    action_context = _build_action_context(plan, exec_result=None)
+                    reason = plan.get("payload", {}).get("reason", "no_action_detected")
+                    logger.info(f"🚫 NOOP: {reason} - will inject truth gate into system prompt")
+            
+            elif plan.get("action") != "NOOP":
+                # Execute the action
                 exec_result = execute_action_plan(
                     plan,
                     {"timezone": "America/Chicago", "state_dir": str(resolve_state_dir())},
                 )
                 action_summary = _format_action_summary(plan, exec_result)
+                action_context = _build_action_context(plan, exec_result)
                 skip_auto_store = True
+                
+                logger.info(f"✅ Action executed: {plan.get('action')} -> {exec_result.get('status')}")
 
     # Not a command - proceed with normal LLM flow
     # Inject system prompt if not already present
@@ -577,6 +648,11 @@ async def chat_completions(
                 system_prompt = f"{system_prompt}\n\n{history_context}"
         except Exception as e:
             logger.warning(f"Failed to load conversation history: {e}")
+        
+        # TRUTH GATE: Inject action context if action was planned
+        if action_context is not None:
+            system_prompt = _inject_action_context_into_prompt(system_prompt, action_context)
+            logger.info(f"🛡️ Truth gate: Injected action context (executed={action_context.get('action_executed')})")
 
         messages.insert(0, {"role": "system", "content": system_prompt})
         logger.debug("Injected Milton system prompt with conversation history")
@@ -942,6 +1018,73 @@ def _build_history_context(memory_store, thread_id: str, max_turns: int = 10, us
         return ""
 
 
+def _build_action_context(plan: dict, exec_result: dict | None = None) -> dict:
+    """Build structured action context for LLM truth gate.
+    
+    Returns a dict with:
+        - action_detected: bool
+        - action_executed: bool  
+        - action_type: str | None
+        - reason: str (e.g., "no_action_detected", "missing_fields", "execution_failed", "executed_ok")
+        - details: dict with action-specific metadata
+    """
+    action = plan.get("action")
+    payload = plan.get("payload") or {}
+    
+    # No action detected
+    if action == "NOOP":
+        reason = payload.get("reason", "no_action_detected")
+        return {
+            "action_detected": False,
+            "action_executed": False,
+            "action_type": None,
+            "reason": reason,
+            "details": {},
+        }
+    
+    # Action detected but needs clarification
+    if action == "CLARIFY":
+        question = payload.get("question", "")
+        return {
+            "action_detected": True,
+            "action_executed": False,
+            "action_type": action,
+            "reason": "needs_clarification",
+            "details": {"question": question},
+        }
+    
+    # Action was detected but not executed yet (exec_result is None)
+    if exec_result is None:
+        return {
+            "action_detected": True,
+            "action_executed": False,
+            "action_type": action,
+            "reason": "not_executed",
+            "details": payload,
+        }
+    
+    # Action was attempted - check execution result
+    if not isinstance(exec_result, dict) or exec_result.get("status") != "ok":
+        errors = exec_result.get("errors", []) if isinstance(exec_result, dict) else []
+        return {
+            "action_detected": True,
+            "action_executed": False,
+            "action_type": action,
+            "reason": "execution_failed",
+            "details": {"errors": errors, "payload": payload},
+        }
+    
+    # Action executed successfully
+    artifacts = exec_result.get("artifacts", {})
+    return {
+        "action_detected": True,
+        "action_executed": True,
+        "action_type": action,
+        "reason": "executed_ok",
+        "details": artifacts,
+    }
+
+
 def _format_action_summary(plan: dict, exec_result: dict) -> str:
     """Create a short action summary for the user."""
     if not isinstance(exec_result, dict) or exec_result.get("status") != "ok":
@@ -964,6 +1107,70 @@ def _format_action_summary(plan: dict, exec_result: dict) -> str:
         return f"Action summary: Added goal: {title}"
 
     return "Action summary: Action completed."
+
+
+def _inject_action_context_into_prompt(system_prompt: str, action_context: dict) -> str:
+    """Inject action execution context into system prompt for truth gate enforcement.
+    
+    This ensures the LLM knows exactly what was and wasn't executed.
+    """
+    action_executed = action_context.get("action_executed", False)
+    action_detected = action_context.get("action_detected", False)
+    action_type = action_context.get("action_type")
+    reason = action_context.get("reason", "unknown")
+    details = action_context.get("details", {})
+    
+    # Build the action status message
+    action_status = "\n\n## ACTION EXECUTION STATUS (CRITICAL - READ THIS)\n\n"
+    
+    if not action_detected:
+        action_status += "**NO ACTION WAS DETECTED OR EXECUTED in the user's message.**\n\n"
+        action_status += f"Reason: {reason}\n\n"
+        action_status += "If the user appears to be requesting an action (like creating a reminder, goal, or saving information), "
+        action_status += "you MUST:\n"
+        action_status += "1. Acknowledge that NO action was executed\n"
+        action_status += "2. Explain that their phrasing wasn't recognized by the action parser\n"
+        action_status += "3. Provide an example of correct phrasing (e.g., 'remind me to X tomorrow at 9am')\n"
+        action_status += "4. Offer to help them rephrase it correctly\n\n"
+        action_status += "**DO NOT claim or imply that any action was taken.**\n"
+    
+    elif not action_executed:
+        action_status += f"**AN ACTION WAS DETECTED ({action_type}) BUT NOT EXECUTED.**\n\n"
+        action_status += f"Reason: {reason}\n\n"
+        
+        if reason == "needs_clarification":
+            question = details.get("question", "")
+            action_status += f"The system needs clarification: {question}\n\n"
+            action_status += "You MUST:\n"
+            action_status += "1. Acknowledge that the action was NOT executed\n"
+            action_status += "2. Ask the clarifying question to get missing information\n"
+            action_status += "3. NOT claim that anything was saved/created/executed\n"
+        
+        elif reason == "execution_failed":
+            errors = details.get("errors", [])
+            action_status += f"Execution failed with errors: {errors}\n\n"
+            action_status += "You MUST:\n"
+            action_status += "1. Acknowledge that the action FAILED\n"
+            action_status += "2. Explain what went wrong\n"
+            action_status += "3. Suggest how to fix it\n"
+            action_status += "4. NOT claim success\n"
+        
+        else:
+            action_status += "You MUST:\n"
+            action_status += "1. Acknowledge that the action was detected but NOT executed\n"
+            action_status += "2. Explain why (if known)\n"
+            action_status += "3. NOT claim that anything was saved/created/executed\n"
+    
+    else:
+        # Action executed successfully
+        action_status += f"**ACTION WAS SUCCESSFULLY EXECUTED: {action_type}**\n\n"
+        action_status += f"Details: {details}\n\n"
+        action_status += "You SHOULD:\n"
+        action_status += "1. Confirm that the action was completed\n"
+        action_status += "2. Reference specific IDs or details from the execution\n"
+        action_status += "3. Be confident in stating what was done\n"
+    
+    return f"{system_prompt}{action_status}"
 
 
 def _summary_text(value: Any) -> str:

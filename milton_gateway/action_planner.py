@@ -37,6 +37,10 @@ def extract_action_plan(user_text: str, now_iso: str, timezone: str) -> Dict[str
 
     Returns a dict with shape:
       {"action": "<TYPE>", "payload": {...}}
+    
+    Note: This function returns NOOP for unrecognized patterns.
+    The caller can check should_use_llm_fallback() and invoke the async
+    LLM classifier if appropriate.
     """
     text = _clean_text(user_text)
     if not text:
@@ -83,6 +87,32 @@ def extract_action_plan(user_text: str, now_iso: str, timezone: str) -> Dict[str
         return _clarify(memory_clarify)
 
     return _noop("no_action_detected")
+
+
+def should_use_llm_fallback(plan: Dict[str, Any], user_text: str) -> bool:
+    """Check if LLM fallback should be attempted for this plan.
+    
+    Returns True if:
+    - Plan is NOOP (primary detection failed)
+    - Text contains action-indicating keywords
+    
+    This is a heuristic gate before expensive LLM classification.
+    
+    Args:
+        plan: Result from extract_action_plan
+        user_text: Original user text
+        
+    Returns:
+        True if LLM fallback should be attempted
+    """
+    # Only fallback if primary planner returned NOOP
+    if plan.get("action") != "NOOP":
+        return False
+    
+    # Import here to avoid circular dependency
+    from milton_gateway.llm_intent_classifier import should_use_fallback
+    
+    return should_use_fallback(user_text)
 
 
 def _parse_explicit_reminder(text: str) -> Tuple[Optional[Dict[str, Any]], Optional[str], float]:

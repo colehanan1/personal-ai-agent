@@ -49,6 +49,24 @@ class ReminderIntentNormalizer:
     PATTERNS = [
         # === EXPLICIT TIME PATTERNS (high confidence) ===
         
+        # "set/create/add/schedule a reminder for me to X at 9am tomorrow"
+        {
+            "pattern": r'\b(set|create|add|schedule)\s+a\s+reminder\s+(?:for me\s+)?to\s+(.+?)\s+at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s+(tomorrow|today|tonight)',
+            "type": "explicit_time",
+            "surface_form": "set_reminder_explicit",
+            "confidence": 0.95,
+            "priority": 13,
+        },
+        
+        # "set/create/add/schedule a reminder for me to X tomorrow at 9am"
+        {
+            "pattern": r'\b(set|create|add|schedule)\s+a\s+reminder\s+(?:for me\s+)?to\s+(.+?)\s+(tomorrow|today|tonight)\s+at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b',
+            "type": "explicit_time",
+            "surface_form": "set_reminder_explicit",
+            "confidence": 0.95,
+            "priority": 12,
+        },
+        
         # "remind me to X at 9am tomorrow" - More specific before general
         {
             "pattern": r'\b(remind me|reminder)\s+to\s+(.+?)\s+at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s+(tomorrow|today|tonight)',
@@ -116,6 +134,15 @@ class ReminderIntentNormalizer:
         
         # === RELATIVE TIME PATTERNS ===
         
+        # "set/create/add/schedule a reminder for me to X in 2 hours"
+        {
+            "pattern": r'\b(set|create|add|schedule)\s+a\s+reminder\s+(?:for me\s+)?to\s+(.+?)\s+in\s+(\d+)\s*(hour|hr|h|minute|min|m|day|d)s?\b',
+            "type": "relative_time",
+            "surface_form": "set_reminder_relative",
+            "confidence": 0.9,
+            "priority": 6,
+        },
+        
         # "remind me to X in 2 hours"
         {
             "pattern": r'\b(remind me|reminder)\s+to\s+(.+?)\s+in\s+(\d+)\s*(hour|hr|h|minute|min|m|day|d)s?\b',
@@ -123,6 +150,17 @@ class ReminderIntentNormalizer:
             "surface_form": "remind_me_relative",
             "confidence": 0.9,
             "priority": 5,
+        },
+        
+        # "set/create/add/schedule a reminder for me to X tomorrow morning"
+        {
+            "pattern": r'\b(set|create|add|schedule)\s+a\s+reminder\s+(?:for me\s+)?to\s+(.+?)\s+(tomorrow|today|tonight)\s+(morning|afternoon|evening)\b',
+            "type": "relative_timeofday",
+            "surface_form": "set_reminder_relative_timeofday",
+            "confidence": 0.7,
+            "priority": 4,
+            "needs_clarification": True,
+            "clarifying_question": "What time {timeofday}? (e.g., '9:00 AM')",
         },
         
         # "remind me to X tomorrow morning"
@@ -148,6 +186,17 @@ class ReminderIntentNormalizer:
         },
         
         # === SIMPLE PATTERNS (lower confidence) ===
+        
+        # "set/create/add/schedule a reminder for me to X" (no time specified)
+        {
+            "pattern": r'\b(set|create|add|schedule)\s+a\s+reminder\s+(?:for me\s+)?to\s+(.+)',
+            "type": "simple_remind",
+            "surface_form": "set_reminder_simple",
+            "confidence": 0.6,
+            "priority": 3,
+            "needs_clarification": True,
+            "clarifying_question": "When would you like to be reminded? (e.g., 'tomorrow at 9am', 'in 2 hours')",
+        },
         
         # "remind me to X"
         {

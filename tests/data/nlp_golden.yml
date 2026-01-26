@@ -18,6 +18,63 @@
 test_cases:
   # === EXPLICIT TIME PATTERNS (high confidence) ===
   
+  # NEW: Testing "set a reminder" pattern - Fix 1 from requirements
+  - phrase: "Set a reminder for me to submit my expense reimbursement tomorrow at 4:30 PM"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_explicit"
+      has_task: true
+      task_contains: "submit my expense reimbursement"
+      has_due_at: true
+      has_recurrence: false
+      channel: "ntfy"
+      needs_clarification: false
+      confidence_min: 0.9
+  
+  # NEW: "create a reminder" variant
+  - phrase: "create a reminder to call the dentist tomorrow at 2pm"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_explicit"
+      has_task: true
+      task_contains: "call the dentist"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.9
+  
+  # NEW: "add a reminder" variant
+  - phrase: "add a reminder for me to review PRs today at 3:30pm"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_explicit"
+      has_task: true
+      task_contains: "review PRs"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.9
+  
+  # NEW: "schedule a reminder" variant
+  - phrase: "schedule a reminder to water plants tomorrow at 8am"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_explicit"
+      has_task: true
+      task_contains: "water plants"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.9
+  
+  # NEW: Without "for me" - should still work
+  - phrase: "set a reminder to finish report tomorrow at 10:30 AM"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_explicit"
+      has_task: true
+      task_contains: "finish report"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.9
+  
   - phrase: "remind me to review GitHub notifications at 9am tomorrow"
     expected:
       intent_type: "reminder.create"
@@ -121,6 +178,28 @@ test_cases:
   
   # === RELATIVE TIME PATTERNS ===
   
+  # NEW: "set a reminder" with relative time
+  - phrase: "set a reminder to stretch in 30 minutes"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_relative"
+      has_task: true
+      task_contains: "stretch"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.85
+  
+  # NEW: "create a reminder" with relative time
+  - phrase: "create a reminder for me to take a break in 1 hour"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_relative"
+      has_task: true
+      task_contains: "take a break"
+      has_due_at: true
+      needs_clarification: false
+      confidence_min: 0.85
+  
   - phrase: "remind me to stretch in 2 hours"
     expected:
       intent_type: "reminder.create"
@@ -150,6 +229,18 @@ test_cases:
       needs_clarification: false
       confidence_min: 0.85
   
+  # NEW: "set a reminder" with relative timeofday (needs clarification)
+  - phrase: "set a reminder to check the stove tomorrow morning"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_relative_timeofday"
+      has_task: true
+      task_contains: "check the stove"
+      has_due_at: false
+      needs_clarification: true
+      clarification_contains: "What time"
+      confidence_min: 0.65
+  
   - phrase: "remind me to check oven tomorrow morning"
     expected:
       intent_type: "reminder.create"
@@ -171,6 +262,29 @@ test_cases:
       confidence_min: 0.65
   
   # === SIMPLE PATTERNS (lower confidence, need clarification) ===
+  
+  # NEW: "set a reminder" without time (needs clarification)
+  - phrase: "set a reminder to buy groceries"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_simple"
+      has_task: true
+      task_contains: "buy groceries"
+      has_due_at: false
+      needs_clarification: true
+      clarification_contains: "When would you like"
+      confidence_min: 0.5
+  
+  # NEW: "create a reminder" without time
+  - phrase: "create a reminder for me to file taxes"
+    expected:
+      intent_type: "reminder.create"
+      surface_form: "set_reminder_simple"
+      has_task: true
+      task_contains: "file taxes"
+      has_due_at: false
+      needs_clarification: true
+      confidence_min: 0.5
   
   - phrase: "remind me to submit expense report"
     expected:
@@ -229,6 +343,21 @@ test_cases:
       confidence_min: 0.85
   
   # === EDGE CASES ===
+  
+  # NEW: NEGATIVE TEST - past tense should NOT match
+  - phrase: "I set a reminder once and it was annoying"
+    expected:
+      intent_type: null  # Should NOT match - this is past tense, not a request
+  
+  # NEW: NEGATIVE TEST - discussion about reminders
+  - phrase: "We should set a reminder system for the team"
+    expected:
+      intent_type: null  # Should NOT match - not requesting a specific reminder
+  
+  # NEW: NEGATIVE TEST - talking about reminder functionality
+  - phrase: "Do you know how to set a reminder?"
+    expected:
+      intent_type: null  # Should NOT match - asking about capability, not setting one
   
   - phrase: "remind me"
     expected:

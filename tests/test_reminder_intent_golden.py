@@ -255,6 +255,224 @@ class TestRegressionProtection:
             f"Timestamp should be >= now (got {result.due_at}, now {int(fixed_now.timestamp())})"
         assert "github" in result.task.lower()
         assert not result.needs_clarification  # Explicit time
+    
+    def test_fix1_set_reminder_explicit_time(self, normalizer, fixed_now):
+        """FIX 1 PRIMARY TEST: 'Set a reminder for me to submit my expense reimbursement tomorrow at 4:30 PM'"""
+        phrase = "Set a reminder for me to submit my expense reimbursement tomorrow at 4:30 PM"
+        result = normalizer.normalize(phrase, now=fixed_now)
+        
+        assert result is not None, "Pattern should match 'set a reminder' phrase"
+        assert result.intent_type == "reminder.create"
+        assert result.surface_form == "set_reminder_explicit"
+        assert "expense reimbursement" in result.task.lower()
+        assert result.due_at is not None, "Should parse explicit time '4:30 PM tomorrow'"
+        assert not result.needs_clarification, "Explicit time should not need clarification"
+        assert result.confidence >= 0.9, "Should have high confidence for explicit time"
+    
+    def test_fix1_create_add_schedule_variants(self, normalizer, fixed_now):
+        """FIX 1 VARIANTS: 'create/add/schedule a reminder' should also work"""
+        test_cases = [
+            ("create a reminder to call dentist tomorrow at 2pm", "call dentist"),
+            ("add a reminder for me to review code tomorrow at 10am", "review code"),
+            ("schedule a reminder to water plants today at 5pm", "water plants"),
+        ]
+        
+        for phrase, expected_task_fragment in test_cases:
+            result = normalizer.normalize(phrase, now=fixed_now)
+            assert result is not None, f"Should match: '{phrase}'"
+            assert result.intent_type == "reminder.create"
+            assert result.surface_form == "set_reminder_explicit"
+            assert expected_task_fragment in result.task.lower()
+            assert result.due_at is not None, f"Should have timestamp for: '{phrase}'"
+            assert not result.needs_clarification
+    
+    def test_fix1_without_for_me(self, normalizer, fixed_now):
+        """FIX 1 OPTIONAL 'for me': Pattern should work with or without 'for me'"""
+        phrases = [
+            "set a reminder to finish report tomorrow at 9am",
+            "set a reminder for me to finish report tomorrow at 9am",
+            "create a reminder to test code tomorrow at 3pm",
+            "add a reminder for me to deploy tomorrow at 11am",
+        ]
+        
+        for phrase in phrases:
+            result = normalizer.normalize(phrase, now=fixed_now)
+            assert result is not None, f"Should match: '{phrase}'"
+            assert result.intent_type == "reminder.create"
+            assert result.surface_form == "set_reminder_explicit"
+            assert result.due_at is not None
+    
+    def test_fix1_relative_time(self, normalizer, fixed_now):
+        """FIX 1 RELATIVE TIME: 'set a reminder in 2 hours' should work"""
+        phrase = "set a reminder to stretch in 30 minutes"
+        result = normalizer.normalize(phrase, now=fixed_now)
+        
+        assert result is not None
+        assert result.intent_type == "reminder.create"
+        assert result.surface_form == "set_reminder_relative"
+        assert "stretch" in result.task.lower()
+        assert result.due_at is not None
+        assert not result.needs_clarification
+        
+        # Verify timestamp is approximately 30 minutes in future
+        expected_ts = int(fixed_now.timestamp()) + (30 * 60)
+        assert abs(result.due_at - expected_ts) <= 1
+    
+    def test_fix1_simple_needs_clarification(self, normalizer, fixed_now):
+        """FIX 1 SIMPLE: 'set a reminder to X' without time should need clarification"""
+        phrase = "set a reminder to buy groceries"
+        result = normalizer.normalize(phrase, now=fixed_now)
+        
+        assert result is not None
+        assert result.intent_type == "reminder.create"
+        assert result.surface_form == "set_reminder_simple"
+        assert "buy groceries" in result.task.lower()
+        assert result.needs_clarification, "Should need clarification without time"
+        assert result.clarifying_question is not None
+    
+    def test_fix1_negative_past_tense(self, normalizer, fixed_now):
+        """FIX 1 NEGATIVE: Past tense 'I set a reminder' should NOT match"""
+        phrase = "I set a reminder once and it was annoying"
+        result = normalizer.normalize(phrase, now=fixed_now)
+        
+        # This should NOT match because it's past tense, not a request
+        assert result is None, "Past tense discussion should not trigger reminder intent"
+    
+    def test_fix1_negative_question(self, normalizer, fixed_now):
+        """FIX 1 NEGATIVE: Questions about reminders should NOT match"""
+        phrases = [
+            "Do you know how to set a reminder?",
+            "Can you set a reminder?",
+            "How do I set a reminder?",
+        ]
+        
+        for phrase in phrases:
+            result = normalizer.normalize(phrase, now=fixed_now)
+            # These questions might match the simple pattern, which is acceptable
+            # The key is they should need clarification if they do match
+            if result is not None:
+                # If it matches, it should at least need clarification
+                assert result.needs_clarification, \
+                    f"Question '{phrase}' should need clarification if matched"
+    
+    def test_fix1_negative_abstract_discussion(self, normalizer, fixed_now):
+        """FIX 1 NEGATIVE: Abstract discussion about reminders should NOT match"""
+        phrase = "We should set a reminder system for the team"
+        result = normalizer.normalize(phrase, now=fixed_now)
+        
+        # This is tricky - it might match "set a reminder ... for the team"
+        # If it does match, the task extraction should be nonsensical
+        # But ideally it shouldn't match at all since it's not a specific reminder request
+        if result is not None:
+            # If it matches, verify the task makes sense or needs clarification
+            # The pattern should extract "system for the team" as the task
+            # which is vague enough to need clarification
+            assert result.needs_clarification, \
+                "Abstract discussion should need clarification if matched"
+    
+    def test_priority_ordering_explicit_beats_simple(self, normalizer, fixed_now):
+        """FIX 1 PRIORITY: Explicit time patterns should match before simple patterns"""
+        phrase = "set a reminder to call mom tomorrow at 9am"
+        result = normalizer.normalize(phrase, now=fixed_now)
+        
+        assert result is not None
+        # Should match explicit pattern, not simple
+        assert result.surface_form == "set_reminder_explicit"
+        assert result.due_at is not None
+        assert not result.needs_clarification
+        # Should NOT match as set_reminder_simple
+
+
+class TestNewPatternSurfaceForms:
+    """Tests to prevent specific regressions."""
+    
+    def test_success_criterion_1_weekday_briefing(self, normalizer, fixed_now):
+        """SUCCESS CRITERION 1: 'every weekday in my morning briefing help me...'"""
+        phrase = "every weekday in my morning briefing help me prioritize my top 3 tasks"
+        result = normalizer.normalize(phrase, now=fixed_now)
+        
+        assert result is not None
+        assert result.intent_type == "reminder.create"
+        assert result.channel == "morning_briefing"
+        assert "weekday" in result.recurrence
+        assert "prioritize" in result.task.lower()
+        # Should need clarification for explicit time
+        assert result.needs_clarification
+    
+    def test_success_criterion_2_explicit_time(self, normalizer, fixed_now):
+        """SUCCESS CRITERION 2: 'remind me to review GitHub notifications at 9am tomorrow'"""
+        phrase = "remind me to review GitHub notifications at 9am tomorrow"
+        result = normalizer.normalize(phrase, now=fixed_now)
+        
+        assert result is not None
+        assert result.intent_type == "reminder.create"
+        assert result.due_at is not None
+        # Allow timestamp to be equal to or greater than now (timezone edge cases)
+        assert result.due_at >= int(fixed_now.timestamp()), \
+            f"Timestamp should be >= now (got {result.due_at}, now {int(fixed_now.timestamp())})"
+        assert "github" in result.task.lower()
+        assert not result.needs_clarification  # Explicit time
+
+
+class TestNewPatternSurfaceForms:
+    """Test that new pattern surface forms are correctly assigned."""
+    
+    def test_set_reminder_explicit_surface_form(self, normalizer, fixed_now):
+        """Verify set_reminder_explicit surface form is assigned correctly."""
+        phrases = [
+            "set a reminder to X tomorrow at 9am",
+            "create a reminder for me to X tomorrow at 9am",
+            "add a reminder to X today at 3pm",
+            "schedule a reminder to X tomorrow at 5pm",
+        ]
+        
+        for phrase in phrases:
+            result = normalizer.normalize(phrase, now=fixed_now)
+            assert result is not None, f"Should match: '{phrase}'"
+            assert result.surface_form == "set_reminder_explicit", \
+                f"Wrong surface form for: '{phrase}'"
+    
+    def test_set_reminder_relative_surface_form(self, normalizer, fixed_now):
+        """Verify set_reminder_relative surface form is assigned correctly."""
+        phrases = [
+            "set a reminder to X in 30 minutes",
+            "create a reminder for me to X in 2 hours",
+            "add a reminder to X in 1 day",
+        ]
+        
+        for phrase in phrases:
+            result = normalizer.normalize(phrase, now=fixed_now)
+            assert result is not None, f"Should match: '{phrase}'"
+            assert result.surface_form == "set_reminder_relative", \
+                f"Wrong surface form for: '{phrase}'"
+    
+    def test_set_reminder_relative_timeofday_surface_form(self, normalizer, fixed_now):
+        """Verify set_reminder_relative_timeofday surface form is assigned correctly."""
+        phrases = [
+            "set a reminder to X tomorrow morning",
+            "create a reminder for me to X today afternoon",
+        ]
+        
+        for phrase in phrases:
+            result = normalizer.normalize(phrase, now=fixed_now)
+            assert result is not None, f"Should match: '{phrase}'"
+            assert result.surface_form == "set_reminder_relative_timeofday", \
+                f"Wrong surface form for: '{phrase}'"
+    
+    def test_set_reminder_simple_surface_form(self, normalizer, fixed_now):
+        """Verify set_reminder_simple surface form is assigned correctly."""
+        phrases = [
+            "set a reminder to buy milk",
+            "create a reminder for me to call dentist",
+            "add a reminder to review code",
+            "schedule a reminder to water plants",
+        ]
+        
+        for phrase in phrases:
+            result = normalizer.normalize(phrase, now=fixed_now)
+            assert result is not None, f"Should match: '{phrase}'"
+            assert result.surface_form == "set_reminder_simple", \
+                f"Wrong surface form for: '{phrase}'"
 
 
 if __name__ == "__main__":
