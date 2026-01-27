@@ -1,25 +1,90 @@
 #!/bin/bash
-# Quick command to ask Milton a question from SSH
-# Usage: ask-milton "Your question here"
+# Quick command to ask Milton a question
+# Usage:
+#   ask-milton "Your question here"           # Continue last conversation
+#   ask-milton --new "Your question here"     # Start new conversation
 
-if [ -z "$1" ]; then
-    echo "Usage: ask-milton \"Your question here\""
+set -e
+
+STATE_DIR="${HOME}/.local/state/milton"
+THREAD_FILE="${STATE_DIR}/current_thread_id"
+GATEWAY_URL="${MILTON_GATEWAY_URL:-http://localhost:8081}"
+
+# Parse arguments
+NEW_THREAD=false
+QUESTION=""
+
+if [ "$1" = "--new" ]; then
+    NEW_THREAD=true
+    QUESTION="$2"
+elif [ -z "$1" ]; then
+    echo "Usage: ask-milton [--new] \"Your question here\""
     echo ""
     echo "Examples:"
     echo "  ask-milton \"What is the weather?\""
-    echo "  ask-milton \"Write a Python function for factorial\""
+    echo "  ask-milton --new \"Write a Python function for factorial\""
     exit 1
+else
+    QUESTION="$1"
 fi
 
-TOPIC="milton-briefing-code-ask"
-QUESTION="$1"
+# Ensure state directory exists
+mkdir -p "$STATE_DIR"
 
-echo "📤 Sending to Milton: $QUESTION"
-curl -s -d "$QUESTION" "ntfy.sh/$TOPIC" > /dev/null
-
-if [ $? -eq 0 ]; then
-    echo "✅ Question sent!"
-    echo "📱 Check your iPhone for the response (milton-briefing-code)"
+# Generate or load thread ID
+if [ "$NEW_THREAD" = true ] || [ ! -f "$THREAD_FILE" ]; then
+    # Generate new thread ID
+    THREAD_ID=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
+    echo "$THREAD_ID" > "$THREAD_FILE"
+    MODE="[NEW]"
 else
-    echo "❌ Failed to send question"
+    # Use existing thread ID
+    THREAD_ID=$(cat "$THREAD_FILE")
+    MODE="[continuing]"
+fi
+
+echo "📤 Sending to Milton $MODE: $QUESTION"
+
+# Send request to gateway with thread_id
+RESPONSE=$(curl -s -X POST \
+    -H "Content-Type: application/json" \
+    -d @- "$GATEWAY_URL/v1/chat/completions" <<EOF
+{
+    "model": "claude-opus-4.5",
+    "messages": [
+        {
+            "role": "user",
+            "content": "$QUESTION"
+        }
+    ],
+    "thread_id": "$THREAD_ID"
+}
+EOF
+)
+
+# Check if we got a valid response
+if echo "$RESPONSE" | grep -q '"choices"'; then
+    echo "✅ Response received!"
+
+    # Extract and display the response
+    ANSWER=$(echo "$RESPONSE" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    if 'choices' in data and len(data['choices']) > 0:
+        print(data['choices'][0].get('message', {}).get('content', ''))
+except:
+    print('Could not parse response')
+" 2>/dev/null)
+
+    if [ -n "$ANSWER" ]; then
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "$ANSWER"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    fi
+else
+    echo "❌ Failed to get response from gateway"
+    echo "Response: $RESPONSE"
+    exit 1
 fi
