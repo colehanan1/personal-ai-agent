@@ -27,6 +27,7 @@ class ChatCompletionRequest(BaseModel):
     thread_id: Optional[str] = None
     session_id: Optional[str] = None
     client_id: Optional[str] = None
+    timezone: Optional[str] = None  # User's timezone for reminder/schedule parsing
     # Additional params Open WebUI might send (ignored but accepted)
     top_p: Optional[float] = None
     frequency_penalty: Optional[float] = None

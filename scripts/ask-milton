@@ -45,7 +45,18 @@ fi
 
 echo "📤 Sending to Milton $MODE: $QUESTION"
 
-# Send request to gateway with thread_id
+# Get user's timezone (from environment or system)
+USER_TIMEZONE="${TZ:-}"
+if [ -z "$USER_TIMEZONE" ]; then
+    # Try to detect from system timezone
+    if command -v timedatectl &> /dev/null; then
+        USER_TIMEZONE=$(timedatectl show -p Timezone --value 2>/dev/null)
+    else
+        USER_TIMEZONE="America/Chicago"
+    fi
+fi
+
+# Send request to gateway with thread_id and timezone
 RESPONSE=$(curl -s -X POST \
     -H "Content-Type: application/json" \
     -d @- "$GATEWAY_URL/v1/chat/completions" <<EOF
@@ -57,7 +68,8 @@ RESPONSE=$(curl -s -X POST \
             "content": "$QUESTION"
         }
     ],
-    "thread_id": "$THREAD_ID"
+    "thread_id": "$THREAD_ID",
+    "timezone": "$USER_TIMEZONE"
 }
 EOF
 )

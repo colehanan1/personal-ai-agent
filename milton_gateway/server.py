@@ -524,10 +524,13 @@ async def chat_completions(
             from milton_gateway.action_planner import extract_action_plan, should_use_llm_fallback
             from milton_gateway.action_executor import execute_action_plan
 
+            # Use timezone from request or default to America/Chicago
+            user_timezone = chat_request.timezone or "America/Chicago"
+
             plan = extract_action_plan(
                 user_message,
                 datetime.now(timezone.utc).isoformat(),
-                "America/Chicago",
+                user_timezone,
             )
             
             # Build action context for all cases
