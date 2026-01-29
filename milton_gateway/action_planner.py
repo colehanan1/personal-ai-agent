@@ -184,7 +184,7 @@ def _parse_normalized_reminder(
     Returns: (payload, clarify_question, confidence)
     """
     normalizer = ReminderIntentNormalizer()
-    intent = normalizer.normalize(text, now=now, timezone=timezone)
+    intent = normalizer.normalize(text, now=now)
     if not intent:
         return None, None, 0.0
 
