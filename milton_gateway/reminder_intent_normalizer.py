@@ -213,36 +213,40 @@ class ReminderIntentNormalizer:
     def __init__(self):
         # Sort patterns by priority (highest first)
         self.patterns = sorted(self.PATTERNS, key=lambda p: p.get("priority", 0), reverse=True)
+        self._user_timezone = DEFAULT_TIMEZONE
     
-    def normalize(self, text: str, now: Optional[datetime] = None) -> Optional[ReminderIntent]:
+    def normalize(self, text: str, now: Optional[datetime] = None, timezone: Optional[str] = None) -> Optional[ReminderIntent]:
         """Normalize text to ReminderIntent.
-        
+
         Args:
             text: User's natural language input
             now: Current time for relative date parsing
-            
+            timezone: User's timezone for time parsing (defaults to DEFAULT_TIMEZONE)
+
         Returns:
             ReminderIntent if reminder detected, None otherwise
         """
         if now is None:
             now = datetime.now()
-        
+
+        self._user_timezone = timezone or DEFAULT_TIMEZONE
+
         text = text.strip()
-        
+
         # Skip slash commands - handled by command processor
         if text.startswith("/"):
             return None
-        
+
         text_lower = text.lower()
-        
+
         # Try each pattern in priority order
         for pattern_def in self.patterns:
             match = re.search(pattern_def["pattern"], text_lower, re.IGNORECASE)
-            
+
             if match:
                 logger.debug(f"Matched pattern: {pattern_def['surface_form']}")
                 return self._build_intent(match, pattern_def, text, now)
-        
+
         return None
     
     def _build_intent(
@@ -353,7 +357,7 @@ class ReminderIntentNormalizer:
     
     def _parse_explicit_time(self, day_str: str, time_str: str, now: datetime) -> Optional[int]:
         """Parse explicit time like 'tomorrow at 9am' into Unix timestamp.
-        
+
         Returns None if parsing fails.
         """
         try:
@@ -362,7 +366,7 @@ class ReminderIntentNormalizer:
             parsed = dateparser.parse(
                 combined,
                 settings={
-                    'TIMEZONE': DEFAULT_TIMEZONE,
+                    'TIMEZONE': self._user_timezone,
                     'RETURN_AS_TIMEZONE_AWARE': True,
                     'PREFER_DATES_FROM': 'future',
                 }
@@ -371,7 +375,7 @@ class ReminderIntentNormalizer:
                 return int(parsed.timestamp())
         except Exception as e:
             logger.warning(f"Failed to parse time '{day_str} at {time_str}': {e}")
-        
+
         return None
     
     def _parse_relative_time(self, quantity: int, unit: str, now: datetime) -> Optional[int]:
